@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 
 // https://vite.dev/config/
 export default defineConfig({
+  base: '/aistudynotes/',
   plugins: [react()],
   optimizeDeps: {
     // lazy-loaded on first math render — prebundle so dev doesn't reload mid-session

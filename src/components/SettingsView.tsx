@@ -19,6 +19,86 @@ import { pruneOrphanMedia } from '../lib/media';
 import { Modal, useConfirm, useToast } from './ui';
 import { DeckPicker } from './DeckPicker';
 
+const AI_LANGUAGES: { value: string; label: string }[] = [
+  { value: 'auto', label: 'Auto — match the card’s language' },
+  { value: 'English', label: 'English' },
+  { value: 'Hebrew', label: 'עברית (Hebrew)' },
+  { value: 'Arabic', label: 'العربية (Arabic)' },
+  { value: 'Spanish', label: 'Español (Spanish)' },
+  { value: 'French', label: 'Français (French)' },
+  { value: 'German', label: 'Deutsch (German)' },
+  { value: 'Italian', label: 'Italiano (Italian)' },
+  { value: 'Portuguese', label: 'Português (Portuguese)' },
+  { value: 'Russian', label: 'Русский (Russian)' },
+  { value: 'Ukrainian', label: 'Українська (Ukrainian)' },
+  { value: 'Polish', label: 'Polski (Polish)' },
+  { value: 'Dutch', label: 'Nederlands (Dutch)' },
+  { value: 'Turkish', label: 'Türkçe (Turkish)' },
+  { value: 'Hindi', label: 'हिन्दी (Hindi)' },
+  { value: 'Chinese (Simplified)', label: '简体中文 (Chinese, Simplified)' },
+  { value: 'Japanese', label: '日本語 (Japanese)' },
+  { value: 'Korean', label: '한국어 (Korean)' },
+];
+
+function AiLanguageField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const isPreset = AI_LANGUAGES.some((l) => l.value === value);
+  const [otherMode, setOtherMode] = useState(!isPreset);
+  const showInput = otherMode || !isPreset;
+
+  const commitCustom = (raw: string) => {
+    const v = raw.trim();
+    if (v) {
+      onChange(v);
+    } else {
+      setOtherMode(false);
+      onChange('auto');
+    }
+  };
+
+  return (
+    <label className="settings-field">
+      <span className="field-label">AI feedback language</span>
+      <select
+        className="select"
+        value={showInput ? '__other__' : value}
+        onChange={(e) => {
+          const v = e.target.value;
+          if (v === '__other__') {
+            setOtherMode(true);
+          } else {
+            setOtherMode(false);
+            onChange(v);
+          }
+        }}
+      >
+        {AI_LANGUAGES.map((l) => (
+          <option key={l.value} value={l.value}>
+            {l.label}
+          </option>
+        ))}
+        <option value="__other__">Other…</option>
+      </select>
+      {showInput && (
+        <input
+          className="input"
+          style={{ marginTop: 8 }}
+          placeholder="Type any language, e.g. Yiddish"
+          defaultValue={isPreset ? '' : value}
+          autoFocus={otherMode && isPreset}
+          onBlur={(e) => commitCustom(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commitCustom((e.target as HTMLInputElement).value);
+          }}
+        />
+      )}
+      <span className="tooltip-hint">
+        The AI writes its feedback in this language. “Auto” answers in whatever language the card is
+        written in.
+      </span>
+    </label>
+  );
+}
+
 export function SettingsView({
   settings,
   onSettingsChanged,
@@ -166,6 +246,8 @@ export function SettingsView({
             {GEMINI_MODELS.find((m) => m.id === settings.model)?.description}
           </span>
         </label>
+
+        <AiLanguageField value={settings.aiLanguage} onChange={(v) => void patch({ aiLanguage: v })} />
 
         <label className="settings-field">
           <span className="field-label">Grading strictness</span>

@@ -893,6 +893,21 @@
   text-align: start; /* with plaintext, each line aligns to its own direction */
 }
 
+/* free forward/back navigation in the study top bar */
+.card-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.card-nav-pos {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+  min-width: 34px;
+  text-align: center;
+}
+
 /* TeX math (MathJax SVG output; fills inherit currentColor so themes just work) */
 .math-display {
   display: block;

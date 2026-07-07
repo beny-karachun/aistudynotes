@@ -21,7 +21,7 @@ Production build: `npm run build`, then `npm run preview` (or serve `dist/` with
    - **Gemini 3.1 Flash-Lite** (default) — fastest/cheapest, great for everyday grading
    - **Gemini 3.5 Flash** — stronger reasoning
    - **Gemini 3.5 Flash — Thinking (high)** — same model with `thinkingLevel: "high"` for the deepest reasoning
-4. Choose grading strictness (lenient / moderate / strict) and your default answer mode.
+4. Choose grading strictness (lenient / moderate / strict), the **AI feedback language** (Auto matches the card's language; pick any preset or type any language under "Other…"), and your default answer mode.
 
 The key is stored only in this browser's database and is sent only to `generativelanguage.googleapis.com`. It is deliberately excluded from exports.
 
@@ -33,7 +33,7 @@ The key is stored only in this browser's database and is sent only to `generativ
 - **Screenshots as content** — get images into any field four ways: Ctrl+V paste (routed to the last-focused field even if your cursor is elsewhere on the page), the clipboard toolbar button (reads the clipboard directly — the fallback if your system's paste event misbehaves), drag & drop, or the attach button. They're compressed to WebP, stored locally, rendered on cards, and sent to the AI as part of the card when grading.
 - **Math** — TeX between `$…$` (inline) or `$$…$$` (display) renders via MathJax (bundled — works offline, follows light/dark theme). It renders everywhere notes appear: study cards, note tile names on the desktop, the browser list, cloze deletions, and AI feedback. `\$` escapes a literal dollar sign, and money like "$5 and $10" is left alone.
 - **RTL support** — Obsidian-style per-line auto direction: every line of a field (and of the editor textareas) picks its direction from its first strong character, so Hebrew/Arabic lines right-align while English lines in the same field stay left-aligned, and mixing RTL and LTR inline (including math) just works.
-- **Study** — classic flip mode or AI mode; keyboard-first (Space/Enter flip, 1–4 rate, U undo, E edit, `-` bury, `@` suspend, Ctrl+1–4 flags, `?` help); edit-during-review; multi-step undo.
+- **Study** — classic flip mode or AI mode; keyboard-first (Space/Enter flip, 1–4 rate, **←/→ browse cards freely without answering** (position shown as 3/12; wraps around; also works in an empty AI answer box), U undo, E edit, `-` bury, `@` suspend, Ctrl+1–4 flags, `?` help); edit-during-review; multi-step undo.
 - **Browser** — search syntax: free text, `deck:`, `tag:`, `is:new/learn/review/due/suspended/buried`, `flag:1-4`, `note:basic/cloze`, `prop:reps>3`, `"quoted phrases"`, `-negation`. Bulk suspend/bury/move/flag/reset/delete.
 - **Stats** — today's summary, future-due forecast, year review heatmap with streaks, answer-button breakdown by maturity, card counts, true retention, AI-graded average.
 - **Import/export** — full-collection or per-deck JSON backups (images included), TSV/CSV text import, "clean unused media" tool.

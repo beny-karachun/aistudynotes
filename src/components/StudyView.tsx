@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
   ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
   Undo2,
   Pencil,
   EyeOff,
@@ -44,6 +46,17 @@ const RATING_META: { rating: Rating; label: string; className: string; key: stri
 ];
 
 const FLAG_COLORS = ['transparent', '#ef4444', '#f97316', '#22c55e', '#3b82f6'];
+
+/**
+ * The session's cards in serving order — due learning first, then the main
+ * queue, then learning cards due later today. Used by the free forward/back
+ * navigation (browsing without answering).
+ */
+function orderedCandidates(q: StudyQueue, now: number): CardRecord[] {
+  const dueLearn = q.learning.filter((c) => c.due <= now);
+  const laterLearn = q.learning.filter((c) => c.due > now);
+  return [...dueLearn, ...q.main, ...laterLearn];
+}
 
 export function StudyView({
   deckId,
@@ -248,6 +261,36 @@ export function StudyView({
     [queue, presentFrom, onChanged],
   );
 
+  // Free navigation: browse the session's cards without answering.
+  const skipBy = useCallback(
+    (delta: number) => {
+      if (!queue || aiBusy) return;
+      const candidates = orderedCandidates(queue, Date.now());
+      if (candidates.length === 0) return;
+      const curIdx = card ? candidates.findIndex((c) => c.id === card.id) : -1;
+      const base = curIdx >= 0 ? curIdx : delta > 0 ? -1 : 0;
+      const next = (((base + delta) % candidates.length) + candidates.length) % candidates.length;
+      setCard(candidates[next]);
+      setPhase('question');
+      setTypedAnswer('');
+      setAiResult(null);
+      setAiError(null);
+      setFinished(false);
+      setWaitingUntil(null);
+      cardStart.current = Date.now();
+    },
+    [queue, card, aiBusy],
+  );
+
+  const navInfo = useMemo(() => {
+    if (!queue) return { total: 0, idx: -1 };
+    const candidates = orderedCandidates(queue, Date.now());
+    return {
+      total: candidates.length,
+      idx: card ? candidates.findIndex((c) => c.id === card.id) : -1,
+    };
+  }, [queue, card]);
+
   const bury = useCallback(async () => {
     if (!card) return;
     await buryCard(card.id, Date.now(), settings.dayStartHour);
@@ -290,6 +333,7 @@ export function StudyView({
         apiKey: settings.apiKey,
         model: settings.model,
         strictness: settings.aiStrictness,
+        language: settings.aiLanguage,
       });
       setAiResult(result);
       setPhase('answer');
@@ -311,9 +355,24 @@ export function StudyView({
           e.preventDefault();
           void submitAiAnswer();
         }
+        // arrows in an EMPTY answer box are a caret no-op — use them to navigate
+        if (
+          (e.key === 'ArrowLeft' || e.key === 'ArrowRight') &&
+          e.target instanceof HTMLTextAreaElement &&
+          e.target.classList.contains('ai-answer-box') &&
+          e.target.value === ''
+        ) {
+          e.preventDefault();
+          skipBy(e.key === 'ArrowRight' ? 1 : -1);
+        }
         return;
       }
       if (editing || showShortcuts) return;
+      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+        e.preventDefault();
+        skipBy(e.key === 'ArrowRight' ? 1 : -1);
+        return;
+      }
       if (e.key === '?') {
         setShowShortcuts(true);
         return;
@@ -357,7 +416,7 @@ export function StudyView({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [card, phase, mode, aiResult, editing, showShortcuts, rate, undo, bury, suspend, setFlag, submitAiAnswer]);
+  }, [card, phase, mode, aiResult, editing, showShortcuts, rate, undo, bury, suspend, setFlag, submitAiAnswer, skipBy]);
 
   // Focus the AI answer box when a new question appears
   useEffect(() => {
@@ -420,6 +479,31 @@ export function StudyView({
               <Sparkles size={13} /> AI
             </button>
           </div>
+          {navInfo.total > 1 && (
+            <span className="card-nav" role="group" aria-label="Browse cards without answering">
+              <button
+                className="icon-btn"
+                title="Previous card — no answer recorded (←)"
+                aria-label="Previous card"
+                onClick={() => skipBy(-1)}
+                disabled={aiBusy}
+              >
+                <ChevronLeft size={17} />
+              </button>
+              <span className="card-nav-pos">
+                {navInfo.idx >= 0 ? navInfo.idx + 1 : '–'}/{navInfo.total}
+              </span>
+              <button
+                className="icon-btn"
+                title="Next card — no answer recorded (→)"
+                aria-label="Next card"
+                onClick={() => skipBy(1)}
+                disabled={aiBusy}
+              >
+                <ChevronRight size={17} />
+              </button>
+            </span>
+          )}
           <button className="icon-btn" title="Undo last review (U)" aria-label="Undo" onClick={() => void undo()}>
             <Undo2 size={17} />
           </button>
@@ -617,6 +701,7 @@ export function StudyView({
               {[
                 ['Space / Enter', 'Show answer · accept suggested rating'],
                 ['1 2 3 4', 'Again · Hard · Good · Easy'],
+                ['← →', 'Previous / next card without answering'],
                 ['Ctrl+Enter', 'Submit answer for AI grading'],
                 ['U', 'Undo last review'],
                 ['E', 'Edit current note'],

@@ -621,6 +621,71 @@ try {
   } else fail('rtl per-line direction', JSON.stringify(rtl));
   await page.screenshot({ path: `${SHOT_DIR}/study-rtl.png` });
 
+  // 30. AI feedback language: persists in settings and reaches the Gemini request
+  await clickByText(page, '.nav-item', 'Settings');
+  await waitForText(page, 'AI feedback language');
+  await page.evaluate(() => {
+    const field = [...document.querySelectorAll('.settings-field')].find((f) =>
+      f.textContent.includes('AI feedback language'),
+    );
+    const sel = field.querySelector('select');
+    sel.value = 'Hebrew';
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await sleep(200);
+  await page.type('.key-row input', 'AIzaINVALID-KEY-FOR-LANG-TEST-00000');
+  await clickByText(page, '.key-row button', 'Save');
+  await sleep(400);
+  await page.reload({ waitUntil: 'networkidle0' });
+  await clickByText(page, '.nav-item', 'Settings');
+  await waitForText(page, 'AI feedback language');
+  const langVal = await page.evaluate(() => {
+    const field = [...document.querySelectorAll('.settings-field')].find((f) =>
+      f.textContent.includes('AI feedback language'),
+    );
+    return field.querySelector('select').value;
+  });
+  if (langVal === 'Hebrew') ok('AI feedback language persists across reload (Hebrew)');
+  else fail('ai language persistence', langVal);
+  let aiBody = '';
+  page.on('request', (req) => {
+    if (req.url().includes('generativelanguage')) aiBody = req.postData() || '';
+  });
+  await clickByText(page, '.nav-item', 'Decks');
+  await sleep(300);
+  await clickByText(page, '.deck-tile', 'RTLLab', { count: 2 });
+  await page.waitForSelector('.folder-head-actions');
+  await clickByText(page, '.folder-head-actions button', 'Study');
+  await page.waitForSelector('.ai-answer-box');
+  await page.type('.ai-answer-box', 'ירושלים');
+  await clickByText(page, 'button', 'Grade my answer');
+  await page.waitForFunction(() => document.querySelector('.ai-error')?.textContent?.length > 3, {
+    timeout: 20000,
+  });
+  if (aiBody.includes('in Hebrew')) ok('grading request instructs the model to answer in Hebrew');
+  else fail('ai language in prompt', aiBody.slice(0, 200) || '(no request captured)');
+
+  // 31. Study navigation: move forward/backward without answering
+  await clickByText(page, 'button', 'RTLLab'); // exit study back to decks
+  await sleep(300);
+  await clickByText(page, '.crumb', 'Home');
+  await sleep(200);
+  await clickByText(page, '.folder-head-actions button', 'Study');
+  await page.waitForSelector('.study-card');
+  await clickByText(page, '.mode-toggle button', 'Classic');
+  await page.waitForSelector('.card-nav-pos');
+  const pos0 = await page.$eval('.card-nav-pos', (e) => e.textContent);
+  await page.keyboard.press('ArrowRight');
+  await sleep(200);
+  const pos1 = await page.$eval('.card-nav-pos', (e) => e.textContent);
+  await page.keyboard.press('ArrowLeft');
+  await sleep(200);
+  const pos2 = await page.$eval('.card-nav-pos', (e) => e.textContent);
+  const ratingShown = await page.evaluate(() => !!document.querySelector('.rating-row'));
+  if (pos0.startsWith('1/') && pos1.startsWith('2/') && pos2 === pos0 && !ratingShown) {
+    ok(`study nav browses without answering: ${pos0} → ${pos1} → ${pos2}`);
+  } else fail('study nav', `${pos0} → ${pos1} → ${pos2}, rating-row=${ratingShown}`);
+
   console.log('\nPage JS errors:', errors.length ? errors : 'none');
   const failed = results.filter(([s]) => s === 'FAIL');
   console.log(`\n=== ${results.length - failed.length}/${results.length} passed ===`);

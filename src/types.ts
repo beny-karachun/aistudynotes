@@ -144,6 +144,8 @@ export interface Settings {
   dayStartHour: number;
   /** decks page behavior: desktop-style icon grid or simple list */
   deckViewMode: 'desktop' | 'list';
+  /** language the AI writes feedback in — 'auto' = match the card's language, otherwise an English language name (e.g. 'Hebrew') */
+  aiLanguage: string;
   lastDeckId?: string;
 }
 
@@ -156,6 +158,7 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultStudyMode: 'ai',
   dayStartHour: 4,
   deckViewMode: 'desktop',
+  aiLanguage: 'auto',
 };
 
 // ---------- AI grading ----------

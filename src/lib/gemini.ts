@@ -111,6 +111,8 @@ export interface GradeRequest {
   apiKey: string;
   model: string;
   strictness: AiStrictness;
+  /** 'auto' (or empty) = answer in the card's language; otherwise a language name */
+  language?: string;
 }
 
 export async function gradeAnswer(req: GradeRequest): Promise<AiGradeResult> {
@@ -123,9 +125,14 @@ export async function gradeAnswer(req: GradeRequest): Promise<AiGradeResult> {
   const questionField = req.reversed ? req.note.back : req.note.front;
   const answerField = req.reversed ? req.note.front : req.note.back;
 
+  const langInstruction =
+    !req.language || req.language === 'auto'
+      ? 'Write "feedback" and "keyPointsMissed" in the same language the card is written in (follow the student\'s language if the card mixes several).'
+      : `Write "feedback" and "keyPointsMissed" in ${req.language}, regardless of what language the card or the answer uses.`;
+
   const parts: GeminiPart[] = [];
   parts.push({
-    text: `You are grading a flashcard review for understanding, not word-for-word recall. The student saw the QUESTION and typed their answer from memory. Compare it to the EXPECTED ANSWER. Judge whether the student genuinely understands the concept — accept synonyms, paraphrases and different orderings when the meaning is right. If images are attached, they are part of the card content and must be considered. Card text and student answers may contain TeX math between $ or $$ delimiters — read it as math notation. ${STRICTNESS_PROMPTS[req.strictness]}`,
+    text: `You are grading a flashcard review for understanding, not word-for-word recall. The student saw the QUESTION and typed their answer from memory. Compare it to the EXPECTED ANSWER. Judge whether the student genuinely understands the concept — accept synonyms, paraphrases and different orderings when the meaning is right. If images are attached, they are part of the card content and must be considered. Card text and student answers may contain TeX math between $ or $$ delimiters — read it as math notation. ${langInstruction} ${STRICTNESS_PROMPTS[req.strictness]}`,
   });
 
   if (isCloze) {

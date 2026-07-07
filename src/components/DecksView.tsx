@@ -21,9 +21,11 @@ import {
   Plus,
   Scissors,
   Settings2,
+  Sparkles,
   Trash2,
 } from 'lucide-react';
 import { db, saveSettings } from '../db';
+import { AiNotesModal } from './AiNotesModal';
 import { InlineContent } from './FieldContent';
 import type { Deck, DeckConfig, DeckTreeNode, Note, Settings, StudyCounts } from '../types';
 import {
@@ -103,6 +105,7 @@ export function DecksView({
   const [optionsFor, setOptionsFor] = useState<Deck | null>(null);
   const [renameModalDeck, setRenameModalDeck] = useState<Deck | null>(null);
   const [editingNote, setEditingNote] = useState<string | null>(null);
+  const [aiNotesDeck, setAiNotesDeck] = useState<Deck | null>(null);
   const toast = useToast();
 
   const setMode = async (m: 'desktop' | 'list') => {
@@ -160,6 +163,7 @@ export function DecksView({
           onNewFolder={(parentId) => setAddingUnder({ parentId })}
           onOptions={setOptionsFor}
           onEditNote={setEditingNote}
+          onAiNotes={setAiNotesDeck}
         />
       ) : (
         <ListRows
@@ -207,6 +211,9 @@ export function DecksView({
       {editingNote && (
         <NoteEditModal noteId={editingNote} onClose={() => setEditingNote(null)} onSaved={() => setEditingNote(null)} />
       )}
+      {aiNotesDeck && (
+        <AiNotesModal deck={aiNotesDeck} settings={settings} onClose={() => setAiNotesDeck(null)} />
+      )}
     </div>
   );
 }
@@ -225,6 +232,7 @@ function DesktopGrid({
   onNewFolder,
   onOptions,
   onEditNote,
+  onAiNotes,
 }: {
   decks: Deck[];
   totalsById: Map<string, StudyCounts>;
@@ -235,6 +243,7 @@ function DesktopGrid({
   onNewFolder: (parentId: string | null) => void;
   onOptions: (deck: Deck) => void;
   onEditNote: (noteId: string) => void;
+  onAiNotes: (deck: Deck) => void;
 }) {
   const toast = useToast();
   const confirm = useConfirm();
@@ -573,6 +582,7 @@ function DesktopGrid({
         { key: 'cut', label: label('Cut'), icon: <Scissors size={15} /> },
         { key: 'copy', label: label('Copy'), icon: <Copy size={15} /> },
         { key: 'pasteInto', label: 'Paste into folder', icon: <ClipboardPaste size={15} />, disabled: !clipboard },
+        { key: 'aiNotes', label: 'Create notes with AI', icon: <Sparkles size={15} /> },
         { key: 'newInside', label: 'New subfolder', icon: <FolderPlus size={15} /> },
         { key: 'options', label: 'Options', icon: <Settings2 size={15} /> },
         { key: 'export', label: 'Export', icon: <Download size={15} /> },
@@ -589,7 +599,12 @@ function DesktopGrid({
     }
     return [
       { key: 'newFolder', label: 'New folder', icon: <FolderPlus size={15} /> },
-      ...(folder ? [{ key: 'addNote', label: 'Add note here', icon: <Plus size={15} /> }] : []),
+      ...(folder
+        ? [
+            { key: 'addNote', label: 'Add note here', icon: <Plus size={15} /> },
+            { key: 'aiNotes', label: 'Create notes with AI', icon: <Sparkles size={15} /> },
+          ]
+        : []),
       { key: 'paste', label: 'Paste', icon: <ClipboardPaste size={15} />, disabled: !clipboard },
       { key: 'selectAll', label: 'Select all', icon: <Copy size={15} /> },
     ];
@@ -630,6 +645,11 @@ function DesktopGrid({
       case 'addNote':
         if (folderId) onAddHere(folderId);
         break;
+      case 'aiNotes': {
+        const deck = decks.find((d) => d.id === (target.kind === 'deck' ? target.id : folderId));
+        if (deck) onAiNotes(deck);
+        break;
+      }
       case 'selectAll':
         setSelected(new Set(orderedKeys));
         break;
@@ -735,6 +755,15 @@ function DesktopGrid({
           {folder && (
             <button className="btn btn-sm btn-secondary" onClick={() => onAddHere(folder.id)}>
               <Plus size={13} /> Add note
+            </button>
+          )}
+          {folder && (
+            <button
+              className="btn btn-sm btn-secondary"
+              onClick={() => onAiNotes(folder)}
+              title="Upload a PDF or images — the AI writes notes into this folder"
+            >
+              <Sparkles size={13} /> Create with AI
             </button>
           )}
           {(() => {

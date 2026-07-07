@@ -893,6 +893,102 @@
   text-align: start; /* with plaintext, each line aligns to its own direction */
 }
 
+/* ---------- Create notes with AI ---------- */
+
+.ai-notes-drop {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px;
+  border: 2px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  margin-bottom: 14px;
+  color: var(--color-text-secondary);
+}
+
+.ai-notes-drop:hover,
+.ai-notes-drop.drag-over {
+  border-color: var(--color-accent);
+  color: var(--color-text);
+  background: var(--color-accent-soft);
+}
+
+.ai-notes-files {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ai-notes-files li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 8px;
+  background: var(--color-surface-2);
+  border-radius: var(--radius-sm);
+}
+
+.ai-notes-files .file-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.gen-notes {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 14px;
+  max-height: 46vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.gen-note {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.gen-note input[type='checkbox'] {
+  margin-top: 4px;
+}
+
+.gen-note-off {
+  opacity: 0.45;
+}
+
+.gen-note-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.gen-note-front {
+  font-weight: 600;
+}
+
+.gen-note-back {
+  border-top: 1px dashed var(--color-border);
+  margin-top: 6px;
+  padding-top: 6px;
+  color: var(--color-text-secondary);
+}
+
+.gen-note-back .field-content,
+.gen-note-front .field-content {
+  font-size: 14px;
+}
+
 /* free forward/back navigation in the study top bar */
 .card-nav {
   display: inline-flex;

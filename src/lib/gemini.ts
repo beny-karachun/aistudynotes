@@ -101,6 +101,160 @@ export class GeminiError extends Error {
   }
 }
 
+/** POST parts to a model, expecting a JSON response matching `schema`. */
+async function geminiJson(
+  apiKey: string,
+  settingsModel: string,
+  parts: GeminiPart[],
+  schema: object,
+): Promise<{ parsed: Record<string, unknown>; apiModel: string; thinkingLevel?: 'low' | 'high' }> {
+  const { apiModel, thinkingLevel } = resolveModel(settingsModel);
+  const body: Record<string, unknown> = {
+    contents: [{ role: 'user', parts }],
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseJsonSchema: schema,
+      ...(thinkingLevel ? { thinkingConfig: { thinkingLevel } } : {}),
+    },
+  };
+
+  const res = await fetch(`${API_BASE}/${apiModel}:generateContent`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': apiKey,
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    let detail = '';
+    try {
+      const err = await res.json();
+      detail = err?.error?.message ?? '';
+    } catch {
+      /* ignore */
+    }
+    if (res.status === 400 && /API key/i.test(detail)) {
+      throw new GeminiError('Invalid API key. Check it in Settings.', res.status);
+    }
+    if (res.status === 429) {
+      throw new GeminiError('Rate limit reached. Wait a moment and try again.', res.status);
+    }
+    throw new GeminiError(detail || `Gemini API error (HTTP ${res.status})`, res.status);
+  }
+
+  const data = await res.json();
+  const text: string | undefined = data?.candidates?.[0]?.content?.parts
+    ?.map((p: { text?: string }) => p.text ?? '')
+    .join('');
+  if (!text) {
+    const blockReason = data?.promptFeedback?.blockReason;
+    throw new GeminiError(
+      blockReason ? `Request blocked by safety filters (${blockReason}).` : 'Empty response from Gemini.',
+    );
+  }
+
+  try {
+    return { parsed: JSON.parse(text) as Record<string, unknown>, apiModel, thinkingLevel };
+  } catch {
+    throw new GeminiError('Gemini returned malformed JSON. Try again.');
+  }
+}
+
+// ---------- AI note creation from uploaded material ----------
+
+/** Deep-reading model used by default when generating notes from a document. */
+export const AI_NOTES_DEFAULT_MODEL = 'gemini-3.5-flash#thinking';
+
+export interface GeneratedNote {
+  type: 'basic' | 'cloze';
+  front: string;
+  back: string;
+}
+
+export interface GenerateNotesRequest {
+  /** source files, in reading order — either base64 binary (pdf/image) or plain text */
+  files: { name: string; mime: string; base64?: string; text?: string }[];
+  instructions?: string;
+  apiKey: string;
+  model: string;
+}
+
+const NOTES_SCHEMA = {
+  type: 'object',
+  properties: {
+    notes: {
+      type: 'array',
+      description: 'Flashcards, in the same order as the concepts appear in the source material.',
+      items: {
+        type: 'object',
+        properties: {
+          type: { type: 'string', enum: ['basic', 'cloze'] },
+          front: {
+            type: 'string',
+            description:
+              'Basic: the question. Cloze: the full text with {{c1::hidden}} deletions.',
+          },
+          back: {
+            type: 'string',
+            description:
+              'Basic: the answer. Cloze: optional extra context (may be an empty string).',
+          },
+        },
+        required: ['type', 'front', 'back'],
+      },
+    },
+  },
+  required: ['notes'],
+} as const;
+
+const NOTES_PROMPT = `You are creating spaced-repetition flashcards from study material. Read the attached source (PDF, images, or text) carefully and produce flashcards covering the important facts, concepts, definitions and relationships a student should remember.
+
+Rules:
+- CRITICAL: output the notes in the SAME ORDER as the material presents them, start of the document first.
+- Each note must be self-contained and understandable without the document. Never reference the document ("as seen in the PDF", page numbers, figure numbers).
+- Prefer "basic" notes (question on the front, answer on the back). Use "cloze" only when fill-in-the-blank is clearly better (formulas, enumerations, key terms in definitions); the cloze text goes in "front" using {{c1::hidden text}} or {{c1::hidden::hint}}, with different c-numbers for blanks that should be tested separately.
+- Write the notes in the same language as the source material.
+- Write math as TeX between $…$ (inline) or $$…$$ (display).
+- Cover the whole document. One note per key fact — quality over quantity, but do not skip important material.`;
+
+export async function generateNotes(req: GenerateNotesRequest): Promise<GeneratedNote[]> {
+  if (!req.apiKey) {
+    throw new GeminiError('No API key configured. Add your Gemini API key in Settings.');
+  }
+  const parts: GeminiPart[] = [{ text: NOTES_PROMPT }];
+  for (const f of req.files) {
+    if (f.text != null) {
+      parts.push({ text: `SOURCE FILE "${f.name}":\n${f.text}` });
+    } else if (f.base64) {
+      parts.push({ inline_data: { mime_type: f.mime, data: f.base64 } });
+    }
+  }
+  if (req.instructions?.trim()) {
+    parts.push({ text: `ADDITIONAL INSTRUCTIONS FROM THE USER (follow them):\n${req.instructions.trim()}` });
+  }
+
+  const { parsed } = await geminiJson(req.apiKey, req.model, parts, NOTES_SCHEMA);
+  const raw = Array.isArray(parsed.notes) ? (parsed.notes as unknown[]) : [];
+  const notes: GeneratedNote[] = [];
+  for (const item of raw) {
+    const n = item as { type?: unknown; front?: unknown; back?: unknown };
+    const front = String(n.front ?? '').trim();
+    const back = String(n.back ?? '').trim();
+    if (!front) continue;
+    let type: GeneratedNote['type'] = n.type === 'cloze' ? 'cloze' : 'basic';
+    // a "cloze" without cloze syntax would produce zero cards — downgrade it
+    if (type === 'cloze' && !/\{\{c\d+::/.test(front)) type = 'basic';
+    if (type === 'basic' && !back) continue;
+    notes.push({ type, front, back });
+  }
+  if (notes.length === 0) {
+    throw new GeminiError('The model returned no usable notes. Try again, or add instructions.');
+  }
+  return notes;
+}
+
 export interface GradeRequest {
   note: Note;
   /** cloze index for cloze cards, 0/1 for basic cards */
@@ -119,7 +273,6 @@ export async function gradeAnswer(req: GradeRequest): Promise<AiGradeResult> {
   if (!req.apiKey) {
     throw new GeminiError('No API key configured. Add your Gemini API key in Settings.');
   }
-  const { apiModel, thinkingLevel } = resolveModel(req.model);
 
   const isCloze = req.note.type === 'cloze';
   const questionField = req.reversed ? req.note.back : req.note.front;
@@ -154,58 +307,7 @@ export async function gradeAnswer(req: GradeRequest): Promise<AiGradeResult> {
 
   parts.push({ text: `STUDENT'S ANSWER:\n${req.userAnswer.trim() || '(blank)'}` });
 
-  const body: Record<string, unknown> = {
-    contents: [{ role: 'user', parts }],
-    generationConfig: {
-      responseMimeType: 'application/json',
-      responseJsonSchema: GRADE_SCHEMA,
-      ...(thinkingLevel ? { thinkingConfig: { thinkingLevel } } : {}),
-    },
-  };
-
-  const res = await fetch(`${API_BASE}/${apiModel}:generateContent`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-goog-api-key': req.apiKey,
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    let detail = '';
-    try {
-      const err = await res.json();
-      detail = err?.error?.message ?? '';
-    } catch {
-      /* ignore */
-    }
-    if (res.status === 400 && /API key/i.test(detail)) {
-      throw new GeminiError('Invalid API key. Check it in Settings.', res.status);
-    }
-    if (res.status === 429) {
-      throw new GeminiError('Rate limit reached. Wait a moment and try again.', res.status);
-    }
-    throw new GeminiError(detail || `Gemini API error (HTTP ${res.status})`, res.status);
-  }
-
-  const data = await res.json();
-  const text: string | undefined = data?.candidates?.[0]?.content?.parts
-    ?.map((p: { text?: string }) => p.text ?? '')
-    .join('');
-  if (!text) {
-    const blockReason = data?.promptFeedback?.blockReason;
-    throw new GeminiError(
-      blockReason ? `Request blocked by safety filters (${blockReason}).` : 'Empty response from Gemini.',
-    );
-  }
-
-  let parsed: Record<string, unknown>;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    throw new GeminiError('Gemini returned malformed JSON. Try again.');
-  }
+  const { parsed, apiModel, thinkingLevel } = await geminiJson(req.apiKey, req.model, parts, GRADE_SCHEMA);
 
   const score = clampInt(parsed.score, 0, 100, 0);
   const suggestedRating = clampInt(parsed.suggestedRating, 1, 4, score >= 60 ? 3 : 1) as Rating;

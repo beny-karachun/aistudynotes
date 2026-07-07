@@ -686,6 +686,127 @@ try {
     ok(`study nav browses without answering: ${pos0} → ${pos1} → ${pos2}`);
   } else fail('study nav', `${pos0} → ${pos1} → ${pos2}, rating-row=${ratingShown}`);
 
+  // 32. Create notes with AI: modal, thinking-high default, request shape
+  await clickByText(page, 'button', 'All decks'); // exit study
+  await sleep(300);
+  await clickByText(page, '.deck-tile', 'MathLab', { count: 2 });
+  await page.waitForSelector('.folder-head-actions');
+  await clickByText(page, '.folder-head-actions button', 'Create with AI');
+  await page.waitForSelector('.ai-notes-drop');
+  const aiNotesModel = await page.$eval('.modal-panel select', (s) => s.value);
+  if (aiNotesModel === 'gemini-3.5-flash#thinking') ok('AI note creation defaults to Gemini 3.5 Flash Thinking (high)');
+  else fail('ai notes default model', aiNotesModel);
+  await page.evaluate(() => {
+    const dz = document.querySelector('.ai-notes-drop');
+    const dt = new DataTransfer();
+    dt.items.add(
+      new File(['%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF'], 'chapter.pdf', {
+        type: 'application/pdf',
+      }),
+    );
+    dz.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
+  });
+  await waitForText(page, 'chapter.pdf');
+  let genReq = { url: '', body: '' };
+  page.on('request', (r) => {
+    if (r.url().includes('generativelanguage')) genReq = { url: r.url(), body: r.postData() || '' };
+  });
+  await clickByText(page, '.modal-panel button', 'Generate notes');
+  await page.waitForFunction(
+    () => document.querySelector('.modal-panel .ai-error')?.textContent?.length > 3,
+    { timeout: 30000 },
+  );
+  if (
+    genReq.url.includes('gemini-3.5-flash:') &&
+    genReq.body.includes('"thinkingLevel":"high"') &&
+    genReq.body.includes('application/pdf') &&
+    genReq.body.includes('SAME ORDER')
+  ) {
+    ok('note-generation request: thinking-high + PDF attached + chronological-order instruction');
+  } else fail('ai notes request', `${genReq.url} :: ${genReq.body.slice(0, 150)}`);
+
+  // 33. Stub the API and run the full generate → review → insert flow
+  await page.evaluate(() => {
+    const orig = window.fetch;
+    window.__origFetch = orig;
+    window.fetch = async (url, opts) => {
+      if (String(url).includes('generativelanguage')) {
+        const payload = {
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    text: JSON.stringify({
+                      notes: [
+                        { type: 'basic', front: 'First concept?', back: 'Alpha' },
+                        { type: 'cloze', front: 'The value is {{c1::42}}.', back: '' },
+                        { type: 'basic', front: 'Third concept?', back: 'Gamma' },
+                      ],
+                    }),
+                  },
+                ],
+              },
+            },
+          ],
+        };
+        return new Response(JSON.stringify(payload), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return orig(url, opts);
+    };
+  });
+  await clickByText(page, '.modal-panel button', 'Generate notes');
+  await waitForText(page, 'First concept?');
+  const genCount = await page.$$eval('.gen-note', (els) => els.length);
+  const hasClozeBadge = await page.evaluate(
+    () => !![...document.querySelectorAll('.gen-note .badge')].find((b) => b.textContent === 'cloze'),
+  );
+  if (genCount === 3 && hasClozeBadge) ok('review screen lists 3 generated notes incl. a cloze');
+  else fail('ai notes review', `count=${genCount}, cloze=${hasClozeBadge}`);
+  await page.screenshot({ path: `${SHOT_DIR}/ai-notes-review.png` });
+  await clickByText(page, '.modal-panel button', 'Add 3 notes');
+  await waitForText(page, 'Added 3 notes to "MathLab"');
+  const genOrder = await page.evaluate(
+    () =>
+      new Promise((resolve) => {
+        const req = indexedDB.open('ankiai');
+        req.onsuccess = () => {
+          const idb = req.result;
+          const tx = idb.transaction(['decks', 'notes'], 'readonly');
+          const out = {};
+          tx.objectStore('decks').getAll().onsuccess = (e) => {
+            out.deckId = e.target.result.find((d) => d.name === 'MathLab')?.id;
+          };
+          tx.objectStore('notes').getAll().onsuccess = (e) => {
+            out.notes = e.target.result;
+          };
+          tx.oncomplete = () => {
+            idb.close();
+            resolve(
+              out.notes
+                .filter((n) => n.deckId === out.deckId && n.tags.includes('ai-generated'))
+                .sort((a, b) => a.createdAt - b.createdAt)
+                .map((n) => n.front),
+            );
+          };
+        };
+      }),
+  );
+  if (
+    genOrder.length === 3 &&
+    genOrder[0].includes('First') &&
+    genOrder[1].includes('42') &&
+    genOrder[2].includes('Third')
+  ) {
+    ok('notes inserted in document order (chronological createdAt) with ai-generated tag');
+  } else fail('ai notes order', JSON.stringify(genOrder));
+  await page.evaluate(() => {
+    window.fetch = window.__origFetch;
+  });
+
   console.log('\nPage JS errors:', errors.length ? errors : 'none');
   const failed = results.filter(([s]) => s === 'FAIL');
   console.log(`\n=== ${results.length - failed.length}/${results.length} passed ===`);

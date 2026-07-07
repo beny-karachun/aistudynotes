@@ -24,8 +24,10 @@ export async function addNote(
   front: string,
   back: string,
   tags: string[],
+  /** override for batch creation: strictly-increasing values keep the new-card queue in insertion order */
+  createdAt?: number,
 ): Promise<Note> {
-  const now = Date.now();
+  const now = createdAt ?? Date.now();
   const note: Note = {
     id: uid(),
     deckId,
@@ -36,7 +38,10 @@ export async function addNote(
     createdAt: now,
     updatedAt: now,
   };
-  const cards = expectedOrds(type, front).map((ord) => newCardRecord(note.id, deckId, ord));
+  const cards = expectedOrds(type, front).map((ord) => ({
+    ...newCardRecord(note.id, deckId, ord),
+    createdAt: now,
+  }));
   await db.transaction('rw', db.notes, db.cards, async () => {
     await db.notes.add(note);
     await db.cards.bulkAdd(cards);

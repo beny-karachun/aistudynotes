@@ -30,7 +30,8 @@ The key is stored only in this browser's database and is sent only to `generativ
 - **Scheduling: FSRS-6** (the algorithm modern Anki uses) via `ts-fsrs` — learning steps (default 1m → 10m), relearning steps, per-deck daily new/review limits, desired-retention slider, 4 AM day rollover (configurable), learn-ahead, leech detection (auto-suspend + `leech` tag), exact interval previews on the answer buttons.
 - **Desktop-style deck browser (default)** — the Decks page works like a computer desktop: each folder is a **2D grid of icons**. Folder tiles show rolled-up due counts (with a hover ▶ to study); notes appear as file tiles inside their deck (image notes show a thumbnail of the screenshot). Double-click opens a folder, the breadcrumb bar navigates back up (Backspace too) and carries Add note/Study for the open folder. Full file-system interactions: click/Ctrl/Shift select, **rubber-band box selection** on empty space, **drag & drop** tiles onto folders or breadcrumb segments to move them (notes can move between decks this way), **Ctrl+X/C/V** cut/copy/paste (copying a folder deep-clones its notes and cards; copying notes duplicates them; review history stays with originals), F2 inline rename, Del delete, Enter open/edit, right-click context menus. A **List** toggle switches to a plain tree list where clicking a deck studies it. Studying a folder always includes its whole subtree.
 - **Note types** — Basic, Basic + reversed, Cloze (`{{c1::text}}` / `{{c1::text::hint}}`, one card per cloze index, editor button or Ctrl+Shift+C).
-- **Screenshots as content** — paste or drag images into any field; they're compressed to WebP, stored locally, rendered on cards, and sent to the AI as part of the card when grading.
+- **Screenshots as content** — get images into any field four ways: Ctrl+V paste (routed to the last-focused field even if your cursor is elsewhere on the page), the clipboard toolbar button (reads the clipboard directly — the fallback if your system's paste event misbehaves), drag & drop, or the attach button. They're compressed to WebP, stored locally, rendered on cards, and sent to the AI as part of the card when grading.
+- **Math** — TeX between `$…$` (inline) or `$$…$$` (display) renders via MathJax (bundled — works offline, follows light/dark theme). Works inside cloze deletions and in AI feedback too. `\$` escapes a literal dollar sign, and money like "$5 and $10" is left alone.
 - **Study** — classic flip mode or AI mode; keyboard-first (Space/Enter flip, 1–4 rate, U undo, E edit, `-` bury, `@` suspend, Ctrl+1–4 flags, `?` help); edit-during-review; multi-step undo.
 - **Browser** — search syntax: free text, `deck:`, `tag:`, `is:new/learn/review/due/suspended/buried`, `flag:1-4`, `note:basic/cloze`, `prop:reps>3`, `"quoted phrases"`, `-negation`. Bulk suspend/bury/move/flag/reset/delete.
 - **Stats** — today's summary, future-due forecast, year review heatmap with streaks, answer-button breakdown by maturity, card counts, true retention, AI-graded average.
@@ -43,7 +44,7 @@ Data lives in IndexedDB under this origin. The app requests persistent storage s
 
 ## Testing
 
-`scripts/e2e.mjs` is a puppeteer-core smoke test (uses your installed Chrome) covering deck creation, note adding, image paste, study/rating/undo, search, stats, settings, persistence, and the Gemini error path:
+`scripts/e2e.mjs` is a puppeteer-core smoke test (uses your installed Chrome) covering deck creation, note adding, image paste/drop, MathJax rendering, study/rating/undo, search, stats, settings, persistence, and the Gemini error path:
 
 ```bash
 npm run dev -- --port 5199 --strictPort   # in one terminal

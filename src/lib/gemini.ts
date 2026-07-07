@@ -125,7 +125,7 @@ export async function gradeAnswer(req: GradeRequest): Promise<AiGradeResult> {
 
   const parts: GeminiPart[] = [];
   parts.push({
-    text: `You are grading a flashcard review for understanding, not word-for-word recall. The student saw the QUESTION and typed their answer from memory. Compare it to the EXPECTED ANSWER. Judge whether the student genuinely understands the concept — accept synonyms, paraphrases and different orderings when the meaning is right. If images are attached, they are part of the card content and must be considered. ${STRICTNESS_PROMPTS[req.strictness]}`,
+    text: `You are grading a flashcard review for understanding, not word-for-word recall. The student saw the QUESTION and typed their answer from memory. Compare it to the EXPECTED ANSWER. Judge whether the student genuinely understands the concept — accept synonyms, paraphrases and different orderings when the meaning is right. If images are attached, they are part of the card content and must be considered. Card text and student answers may contain TeX math between $ or $$ delimiters — read it as math notation. ${STRICTNESS_PROMPTS[req.strictness]}`,
   });
 
   if (isCloze) {

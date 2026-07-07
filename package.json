@@ -13,6 +13,7 @@
     "dexie": "^4.4.4",
     "dexie-react-hooks": "^4.4.0",
     "lucide-react": "^1.23.0",
+    "mathjax-full": "^3.2.1",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "ts-fsrs": "^5.4.1"

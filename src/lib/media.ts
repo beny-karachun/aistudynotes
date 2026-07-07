@@ -101,6 +101,14 @@ export async function pruneOrphanMedia(): Promise<number> {
   return orphans.length;
 }
 
+const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|avif|bmp|tiff?|svg)$/i;
+
+// Some sources (Linux clipboards especially) hand over files with an empty
+// MIME type — fall back to the file name.
+function looksLikeImage(f: File): boolean {
+  return f.type.startsWith('image/') || (!f.type && IMAGE_EXT_RE.test(f.name));
+}
+
 /** Extract image files from a paste/drop event, if any. */
 export function imageFilesFrom(dt: DataTransfer | null): File[] {
   if (!dt) return [];
@@ -108,7 +116,13 @@ export function imageFilesFrom(dt: DataTransfer | null): File[] {
   for (const item of Array.from(dt.items ?? [])) {
     if (item.kind === 'file') {
       const f = item.getAsFile();
-      if (f && f.type.startsWith('image/')) files.push(f);
+      if (f && looksLikeImage(f)) files.push(f);
+    }
+  }
+  // Some platforms populate .files without usable .items entries.
+  if (files.length === 0) {
+    for (const f of Array.from(dt.files ?? [])) {
+      if (looksLikeImage(f)) files.push(f);
     }
   }
   return files;

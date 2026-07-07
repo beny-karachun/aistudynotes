@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { mediaUrl } from '../lib/media';
+import { splitMath, loadTexRenderer, type TexRender } from '../lib/mathtex';
 
 function MediaImage({ id }: { id: string }) {
   const [url, setUrl] = useState<string | null>(null);
@@ -22,6 +23,39 @@ function MediaImage({ id }: { id: string }) {
   return <img src={url} alt="" className="field-image" loading="lazy" />;
 }
 
+// Once the lazy MathJax engine has loaded, rendering becomes synchronous, so
+// cards after the first math card never flash raw TeX.
+let texRender: TexRender | null = null;
+
+function MathTex({ tex, display }: { tex: string; display: boolean }) {
+  const [, bump] = useState(0);
+  useEffect(() => {
+    if (texRender) return;
+    let alive = true;
+    loadTexRenderer()
+      .then((r) => {
+        texRender = r;
+        if (alive) bump((n) => n + 1);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const html = texRender ? texRender(tex, display) : null;
+  if (!html) {
+    // engine still loading, or the TeX could not be rendered — show the source
+    return <span className={`math-raw ${display ? 'math-display' : ''}`}>{display ? `$$${tex}$$` : `$${tex}$`}</span>;
+  }
+  return (
+    <span
+      className={display ? 'math math-display' : 'math'}
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
+}
+
 /** Inline markdown-lite: **bold**, *italic*, `code`. Returns React nodes (no HTML injection). */
 function renderInline(text: string, keyPrefix: string): ReactNode[] {
   const nodes: ReactNode[] = [];
@@ -41,10 +75,32 @@ function renderInline(text: string, keyPrefix: string): ReactNode[] {
   return nodes;
 }
 
+/** A run of prose: TeX math segments + newlines + markdown-lite. */
+function renderTextRun(text: string, keyPrefix: string): ReactNode[] {
+  const out: ReactNode[] = [];
+  splitMath(text).forEach((seg, mi) => {
+    const key = `${keyPrefix}-m${mi}`;
+    if (seg.kind === 'math') {
+      out.push(<MathTex key={key} tex={seg.tex} display={seg.display} />);
+      return;
+    }
+    seg.text.split('\n').forEach((line, li) => {
+      if (li > 0) out.push(<br key={`${key}-br${li}`} />);
+      out.push(...renderInline(line, `${key}-l${li}`));
+    });
+  });
+  return out;
+}
+
+/** Math + markdown-lite for plain prose (AI feedback, typed answers) — no image/cloze tokens. */
+export function InlineContent({ text }: { text: string }) {
+  return <>{renderTextRun(text, 'ic')}</>;
+}
+
 /**
  * Renders a note field: [img:id] tokens become images, ⟪CLOZE⟫…⟪/CLOZE⟫
- * markers (from cloze rendering) become highlighted spans, newlines become
- * line breaks, plus markdown-lite inline formatting.
+ * markers (from cloze rendering) become highlighted spans, $…$/$$…$$ become
+ * MathJax, newlines become line breaks, plus markdown-lite inline formatting.
  */
 export function FieldContent({ text }: { text: string }) {
   const segments = text.split(/(\[img:[a-zA-Z0-9-]+\]|⟪CLOZE⟫[\s\S]*?⟪\/CLOZE⟫)/g);
@@ -58,18 +114,15 @@ export function FieldContent({ text }: { text: string }) {
     }
     const cloze = seg.match(/^⟪CLOZE⟫([\s\S]*?)⟪\/CLOZE⟫$/);
     if (cloze) {
+      // recurse so a revealed {{c1::$x^2$}} still renders its math
       out.push(
         <span key={`cz-${si}`} className="cloze-mark">
-          {cloze[1]}
+          {renderTextRun(cloze[1], `cz-${si}`)}
         </span>,
       );
       return;
     }
-    const lines = seg.split('\n');
-    lines.forEach((line, li) => {
-      if (li > 0) out.push(<br key={`br-${si}-${li}`} />);
-      out.push(...renderInline(line, `t-${si}-${li}`));
-    });
+    out.push(...renderTextRun(seg, `t-${si}`));
   });
   return <div className="field-content">{out}</div>;
 }

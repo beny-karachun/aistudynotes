@@ -30,7 +30,7 @@ import {
 } from '../lib/scheduler';
 import { renderClozeBack, renderClozeFront } from '../lib/cloze';
 import { gradeAnswer, GeminiError } from '../lib/gemini';
-import { FieldContent } from './FieldContent';
+import { FieldContent, InlineContent } from './FieldContent';
 import { Modal, useToast } from './ui';
 import { NoteEditModal } from './NoteEditModal';
 
@@ -540,11 +540,15 @@ export function StudyView({
                             ? 'Partially correct'
                             : 'Not quite'}
                       </div>
-                      <p className="ai-feedback">{aiResult.feedback}</p>
+                      <p className="ai-feedback">
+                        <InlineContent text={aiResult.feedback} />
+                      </p>
                       {aiResult.keyPointsMissed.length > 0 && (
                         <ul className="ai-missed">
                           {aiResult.keyPointsMissed.map((p, i) => (
-                            <li key={i}>{p}</li>
+                            <li key={i}>
+                              <InlineContent text={p} />
+                            </li>
                           ))}
                         </ul>
                       )}
@@ -553,7 +557,7 @@ export function StudyView({
                   {typedAnswer.trim() && (
                     <div className="ai-your-answer">
                       <span className="field-label">Your answer</span>
-                      {typedAnswer}
+                      <InlineContent text={typedAnswer} />
                     </div>
                   )}
                 </div>

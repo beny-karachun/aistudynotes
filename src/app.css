@@ -864,6 +864,26 @@
   font-size: 13px;
 }
 
+/* TeX math (MathJax SVG output; fills inherit currentColor so themes just work) */
+.math-display {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 0;
+}
+
+.math-raw {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  color: var(--color-text-secondary);
+}
+
+.math-raw.math-display {
+  text-align: center;
+  margin: 10px 0;
+}
+
 .media-loading {
   display: inline-block;
   width: 100%;

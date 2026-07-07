@@ -9,6 +9,37 @@ const fail = (name, err) => { results.push(['FAIL', name + ' :: ' + err]); conso
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// tiny 2x2 red PNG
+const TINY_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFElEQVR4nGP8z8DwnwEKmBhQAAMAJgQDAViKGAcAAAAASUVORK5CYII=';
+
+/** Dispatch a synthetic image paste; targetSelector null = paste on document.body (no field focused). */
+async function dispatchImagePaste(page, targetSelector) {
+  await page.evaluate(
+    (b64, sel) => {
+      const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+      const dt = new DataTransfer();
+      dt.items.add(new File([bytes], 'clip.png', { type: 'image/png' }));
+      const target = sel ? document.querySelector(sel) : document.body;
+      if (sel) target.focus();
+      const ev = new ClipboardEvent('paste', { bubbles: true, cancelable: true });
+      Object.defineProperty(ev, 'clipboardData', { value: dt });
+      target.dispatchEvent(ev);
+    },
+    TINY_PNG,
+    targetSelector,
+  );
+}
+
+async function clearTextarea(page, selector) {
+  await page.evaluate((sel) => {
+    const ta = document.querySelector(sel);
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+    setter.call(ta, '');
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    ta.blur();
+  }, selector);
+}
+
 async function clickByText(page, selector, text, opts) {
   const handle = await page.evaluateHandle(
     (sel, t) => [...document.querySelectorAll(sel)].find((el) => el.textContent.trim().includes(t)),
@@ -413,6 +444,95 @@ try {
   await sleep(200);
   await clickByText(page, '.seg-control button', 'Desktop');
   await sleep(200);
+
+  // 22. Paste an image with focus inside the front field (synthetic clipboard)
+  await clickByText(page, '.nav-item', 'Add');
+  await page.waitForSelector('.add-view textarea');
+  await dispatchImagePaste(page, '.add-view textarea');
+  await page.waitForFunction(
+    () => document.querySelector('.add-view textarea').value.includes('[img:'),
+    { timeout: 5000 },
+  );
+  ok('pasting an image into a focused field inserts it');
+
+  // 23. Paste with focus on the body — document-level routing to the last-focused field
+  await clearTextarea(page, '.add-view textarea');
+  await dispatchImagePaste(page, null);
+  await page.waitForFunction(
+    () => document.querySelector('.add-view textarea').value.includes('[img:'),
+    { timeout: 5000 },
+  );
+  ok('paste with focus outside any field routes to the front field');
+
+  // 24. Explicit clipboard button reads the real clipboard via the async API
+  try {
+    const ctx = browser.defaultBrowserContext();
+    await ctx
+      .overridePermissions(BASE, ['clipboard-read', 'clipboard-write', 'clipboard-sanitized-write'])
+      .catch(() => ctx.overridePermissions(BASE, ['clipboard-read', 'clipboard-write']));
+    await clearTextarea(page, '.add-view textarea');
+    await page.bringToFront();
+    await page.evaluate(async (b64) => {
+      const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+      await navigator.clipboard.write([
+        new ClipboardItem({ 'image/png': new Blob([bytes], { type: 'image/png' }) }),
+      ]);
+    }, TINY_PNG);
+    await page.click('.field-editor button[title="Paste image from clipboard"]');
+    await page.waitForFunction(
+      () => document.querySelector('.add-view textarea').value.includes('[img:'),
+      { timeout: 5000 },
+    );
+    ok('clipboard-API paste button inserts the image');
+  } catch (e) {
+    console.log('SKIP clipboard-API button (headless clipboard limitation):', String(e).slice(0, 120));
+  }
+
+  // 25. MathJax: $inline$ + $$display$$ render on cards; money $ stays literal
+  await clickByText(page, '.nav-item', 'Decks');
+  await sleep(300);
+  await clickByText(page, '.crumb', 'Home').catch(() => {});
+  await sleep(200);
+  await clickByText(page, 'button', 'New folder');
+  await page.waitForSelector('.modal-panel input');
+  await page.type('.modal-panel input', 'MathLab');
+  await clickByText(page, '.modal-panel button', 'Create');
+  await waitForText(page, 'MathLab');
+  await clickByText(page, '.nav-item', 'Add');
+  await page.waitForSelector('.add-view textarea');
+  await page.evaluate(() => {
+    const deckSel = document.querySelectorAll('.add-selectors select')[1];
+    const opt = [...deckSel.options].find((o) => o.textContent.includes('MathLab'));
+    deckSel.value = opt.value;
+    deckSel.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await clearTextarea(page, '.add-view textarea');
+  const mathAreas = await page.$$('.add-view textarea');
+  await mathAreas[0].type("Euler's identity: $e^{i\\pi}+1=0$. Evaluate: $$\\int_0^1 x^2\\,dx$$");
+  await mathAreas[1].type('It equals $\\frac{1}{3}$. Costs $5 and $10 stay dollars.');
+  await clickByText(page, 'button', 'Add note');
+  await waitForText(page, 'Added — 1 card created');
+  await clickByText(page, '.nav-item', 'Decks');
+  await sleep(300);
+  await clickByText(page, '.deck-tile', 'MathLab', { count: 2 });
+  await page.waitForSelector('.folder-head-actions');
+  await clickByText(page, '.folder-head-actions button', 'Study');
+  await page.waitForSelector('.study-card');
+  await clickByText(page, '.mode-toggle button', 'Classic');
+  await page.waitForSelector('.study-question .math-display mjx-container svg', { timeout: 20000 });
+  const mathQ = await page.evaluate(() => ({
+    text: document.querySelector('.study-question').innerText,
+    containers: document.querySelectorAll('.study-question mjx-container').length,
+  }));
+  if (mathQ.containers >= 2 && !mathQ.text.includes('$e^')) {
+    ok('question: inline + display TeX render as MathJax (raw $ source gone)');
+  } else fail('mathjax question', JSON.stringify(mathQ).slice(0, 120));
+  await clickByText(page, 'button', 'Show answer');
+  await page.waitForSelector('.study-answer mjx-container svg', { timeout: 20000 });
+  const mathA = await page.$eval('.study-answer', (e) => e.innerText);
+  if (mathA.includes('$5 and $10')) ok('answer: $\\frac{1}{3}$ renders; "$5 and $10" stays literal');
+  else fail('mathjax money', mathA.slice(0, 120));
+  await page.screenshot({ path: `${SHOT_DIR}/study-math.png` });
 
   console.log('\nPage JS errors:', errors.length ? errors : 'none');
   const failed = results.filter(([s]) => s === 'FAIL');

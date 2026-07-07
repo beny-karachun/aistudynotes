@@ -273,6 +273,15 @@ function DesktopGrid({
   );
   const shownNotes = sortedNotes.slice(0, NOTE_TILE_CAP);
 
+  // Library size (all cards in the open subtree) — shown next to the today
+  // counters so the daily-limited numbers aren't mistaken for the total.
+  const totalCards = useLiveQuery(async () => {
+    if (folderId) {
+      return db.cards.where('deckId').anyOf(descendantIds(decks, folderId)).count();
+    }
+    return db.cards.count();
+  }, [folderId, decks]);
+
   const orderedKeys = useMemo(
     () => [...childFolders.map((d) => deckKey(d.id)), ...shownNotes.map((n) => noteKey(n.id))],
     [childFolders, shownNotes],
@@ -736,7 +745,11 @@ function DesktopGrid({
             </button>
           </span>
         ))}
-        <span className="crumb-totals">
+        <span
+          className="crumb-totals"
+          title="New · learning · due cards available to study TODAY — capped by the deck's daily limits (right-click a folder → Options to change them). The total on the right is everything stored here."
+        >
+          Today:{' '}
           {folder && folderCounts ? (
             <>
               <span className="count-new">{folderCounts.newCount}</span> ·{' '}
@@ -749,6 +762,12 @@ function DesktopGrid({
               <span className="count-learn">{homeTotals.learnCount}</span> ·{' '}
               <span className="count-due">{homeTotals.reviewCount}</span>
             </>
+          )}
+          {totalCards != null && (
+            <span className="crumb-total-all">
+              {' '}
+              — {totalCards} card{totalCards === 1 ? '' : 's'} total
+            </span>
           )}
         </span>
         <span className="folder-head-actions">
@@ -859,7 +878,10 @@ function DesktopGrid({
                   )}
                 </div>
                 {hasWork ? (
-                  <div className="tile-counts">
+                  <div
+                    className="tile-counts"
+                    title="New · learning · due available today (daily limits apply — not the total stored)"
+                  >
                     <span className="count-new">{c.newCount}</span>
                     <span className="count-learn">{c.learnCount}</span>
                     <span className="count-due">{c.reviewCount}</span>

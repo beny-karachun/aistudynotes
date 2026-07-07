@@ -539,6 +539,10 @@ try {
   await sleep(400);
   await page.waitForSelector('.note-tile .tile-name mjx-container svg', { timeout: 10000 });
   ok('note tile name renders TeX as MathJax');
+  const crumbTotals = await page.$eval('.crumb-totals', (e) => e.textContent);
+  if (/Today:/.test(crumbTotals) && /card(s)? total/.test(crumbTotals)) {
+    ok(`counter labeled as today's limit + library total: "${crumbTotals.trim()}"`);
+  } else fail('crumb totals labeling', crumbTotals);
   await page.screenshot({ path: `${SHOT_DIR}/tiles-math.png` });
 
   // 27. Right-click "Add note here" → Go back button returns to that folder

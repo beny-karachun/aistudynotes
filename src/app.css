@@ -893,6 +893,11 @@
   text-align: start; /* with plaintext, each line aligns to its own direction */
 }
 
+.crumb-total-all {
+  color: var(--color-text-secondary);
+  font-weight: 400;
+}
+
 /* ---------- Create notes with AI ---------- */
 
 .ai-notes-drop {

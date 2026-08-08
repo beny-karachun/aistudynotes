@@ -1,7 +1,13 @@
-# Promo video generator
+# Promo assets generator
 
-Produces `out/aistudynotes-promo.mp4` — a ~104s narrated feature tour of AIstudynotes
-(1920×1200, 30 fps, H.264). No API key and no manual clicking required.
+Produces a ~104s feature-tour video plus a set of marketing screenshots/images for
+AIstudynotes. No API key and no manual clicking required.
+
+Outputs (`out/`):
+- `aistudynotes-promo.mp4` — silent feature tour (1920×1200, 30 fps, H.264)
+- `aistudynotes-promo-music.mp4` — same video with the licensed background track (see Audio)
+- `shots/raw/*.png` — clean 2× screenshots of every view (light + dark)
+- `shots/marketing/*.png` — branded images: `hero`, `social-og`, and 5 `feature-*` cards
 
 ## How it works
 
@@ -25,6 +31,26 @@ node scripts/promo/record.mjs             # in another → writes out/aistudynot
 
 - `PROMO_LIMIT=3 node scripts/promo/record.mjs` records only the first 3 scenes (quick test).
 - Requires system Chrome at `/usr/bin/google-chrome` and `ffmpeg` on PATH.
+
+## Screenshots & marketing images
+
+```bash
+node scripts/promo/shots.mjs                 # capture screenshots + compose marketing images
+SHOTS_MKT_ONLY=1 node scripts/promo/shots.mjs  # only recompose marketing images (reuse raw shots)
+```
+
+## Audio
+
+`music.mp3` is the licensed background track (Pixabay Content License — "Corporate Upbeat" by
+nastelbom; license certificate at repo root, commercial use, no attribution required). To (re)mux
+it onto the video with fade-in/out + loudness normalization:
+
+```bash
+ffmpeg -y -i out/aistudynotes-promo.mp4 -i music.mp3 \
+  -filter_complex "[1:a]atrim=0:104,afade=t=in:st=0:d=1.5,afade=t=out:st=101.5:d=2.5,loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000[a]" \
+  -map 0:v -map "[a]" -c:v copy -c:a aac -b:a 192k -ar 48000 -movflags +faststart -shortest \
+  out/aistudynotes-promo-music.mp4
+```
 
 ## Storyboard
 

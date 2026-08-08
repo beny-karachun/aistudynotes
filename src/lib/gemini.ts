@@ -8,8 +8,8 @@ import type { Note } from '../types';
 // separate -thinking model id in the 3.x generation.
 export const GEMINI_MODELS: GeminiModelOption[] = [
   {
-    id: 'gemini-3.1-flash-lite',
-    label: 'Gemini 3.1 Flash-Lite (default)',
+    id: 'gemini-3.5-flash-lite',
+    label: 'Gemini 3.5 Flash-Lite (default)',
     description: 'Fastest and cheapest; great for everyday grading.',
   },
   {
@@ -165,7 +165,7 @@ async function geminiJson(
 // ---------- AI note creation from uploaded material ----------
 
 /** Model used by default when generating notes from a document. */
-export const AI_NOTES_DEFAULT_MODEL = 'gemini-3.1-flash-lite';
+export const AI_NOTES_DEFAULT_MODEL = 'gemini-3.5-flash-lite';
 
 export interface GeneratedNote {
   type: 'basic' | 'cloze';

@@ -18,7 +18,7 @@ Production build: `npm run build`, then `npm run preview` (or serve `dist/` with
 1. Get a free API key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
 2. In the app: **Settings → AI grading** — paste the key, press **Test**.
 3. Pick a model:
-   - **Gemini 3.1 Flash-Lite** (default) — fastest/cheapest, great for everyday grading
+   - **Gemini 3.5 Flash-Lite** (default) — fastest/cheapest, great for everyday grading
    - **Gemini 3.5 Flash** — stronger reasoning
    - **Gemini 3.5 Flash — Thinking (high)** — same model with `thinkingLevel: "high"` for the deepest reasoning
 4. Choose grading strictness (lenient / moderate / strict), the **AI feedback language** (Auto matches the card's language; pick any preset or type any language under "Other…"), and your default answer mode.

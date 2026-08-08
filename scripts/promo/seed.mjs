@@ -358,7 +358,7 @@ export const seedInPage = async () => {
   // ---------- ~150 days of review history (heatmap, retention, AI-graded avg) ----------
   const revlog = [];
   const reviewCards = cards.filter((c) => c.state === 2);
-  const AI_MODELS = ['gemini-3.1-flash-lite', 'gemini-3.5-flash'];
+  const AI_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.5-flash'];
   for (let d = 150; d >= 0; d--) {
     // recent ~45 days almost always studied (streak); older days patchier
     const recent = d < 45;
@@ -404,7 +404,7 @@ export const seedInPage = async () => {
     id: 'app',
     theme: 'light',
     apiKey: 'AIzaSyD3moK3y-promo-video-not-a-real-key-000',
-    model: 'gemini-3.1-flash-lite',
+    model: 'gemini-3.5-flash-lite',
     aiStrictness: 'moderate',
     defaultStudyMode: 'classic',
     dayStartHour: 4,

@@ -143,6 +143,7 @@ export default function App() {
             settings={settings}
             onExit={exitStudy}
             onChanged={bumpRefresh}
+            onSettingsChanged={() => void reloadSettings()}
           />
         )}
         {view.name === 'add' && (

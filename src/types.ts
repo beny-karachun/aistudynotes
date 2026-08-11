@@ -132,6 +132,7 @@ export interface GeminiModelOption {
 
 export type AiStrictness = 'lenient' | 'moderate' | 'strict';
 export type StudyMode = 'classic' | 'ai' | 'questions' | 'exercise';
+export type ExerciseTextDirection = 'auto' | 'rtl' | 'ltr';
 
 export interface Settings {
   id: 'app';
@@ -141,6 +142,8 @@ export interface Settings {
   aiStrictness: AiStrictness;
   /** default answer mode when studying */
   defaultStudyMode: StudyMode;
+  /** text direction for generated Exercise content; auto detects the dominant script */
+  exerciseTextDirection: ExerciseTextDirection;
   /** hour of day when the "day" rolls over (Anki default 4am) */
   dayStartHour: number;
   /** decks page behavior: desktop-style icon grid or simple list */
@@ -157,6 +160,7 @@ export const DEFAULT_SETTINGS: Settings = {
   model: '', // filled with DEFAULT_MODEL at load
   aiStrictness: 'moderate',
   defaultStudyMode: 'ai',
+  exerciseTextDirection: 'auto',
   dayStartHour: 4,
   deckViewMode: 'desktop',
   aiLanguage: 'auto',

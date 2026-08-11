@@ -1491,6 +1491,60 @@
   gap: 16px;
 }
 
+.exercise-header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.exercise-header-actions .question-card-toggle {
+  min-height: 46px;
+}
+
+.exercise-direction-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 46px;
+  padding: 3px;
+  border-radius: 13px;
+  color: var(--color-fg-muted);
+  background: var(--color-surface-2);
+  box-shadow: inset 0 0 0 1px var(--color-border);
+}
+
+.exercise-direction-control > svg {
+  margin: 0 5px 0 6px;
+  flex: 0 0 auto;
+}
+
+.exercise-direction-control button {
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 750;
+  transition: background-color 150ms ease, color 150ms ease, transform 100ms ease;
+}
+
+.exercise-direction-control button:hover {
+  color: var(--color-fg);
+  background: color-mix(in srgb, var(--color-surface) 76%, transparent);
+}
+
+.exercise-direction-control button:active {
+  transform: scale(0.96);
+}
+
+.exercise-direction-control button.active {
+  color: var(--color-primary);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
+}
+
 .exercise-identity {
   display: flex;
   align-items: center;
@@ -1505,6 +1559,31 @@
   font-size: 14px;
   font-weight: 750;
   text-wrap: balance;
+}
+
+.exercise-challenge[dir],
+.exercise-source-card[dir],
+.exercise-answer-heading > div[dir],
+.exercise-hints[dir],
+.exercise-answer-box[dir],
+.exercise-result .ai-result[dir],
+.exercise-rubric[dir],
+.exercise-solution-comparison[dir] {
+  text-align: start;
+}
+
+.exercise-challenge[dir] h2,
+.exercise-scenario p,
+.exercise-task p,
+.exercise-source-card[dir] .field-content,
+.exercise-hints[dir] p,
+.exercise-answer-box[dir],
+.exercise-result .ai-result[dir] .ai-feedback,
+.exercise-result .ai-result[dir] .ai-missed li,
+.exercise-rubric[dir] strong,
+.exercise-rubric[dir] p,
+.exercise-solution-comparison[dir] p {
+  unicode-bidi: isolate;
 }
 
 .exercise-visual-note {
@@ -2708,6 +2787,20 @@ kbd {
   .exercise-result-actions,
   .exercise-result-actions .btn {
     width: 100%;
+  }
+
+  .exercise-header-actions {
+    align-items: stretch;
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .exercise-direction-control {
+    width: 100%;
+  }
+
+  .exercise-direction-control button {
+    flex: 1;
   }
 
   .exercise-solution-comparison {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowRight,
   CheckCircle2,
@@ -7,6 +7,7 @@ import {
   EyeOff,
   ImageIcon,
   Lightbulb,
+  Languages,
   Loader2,
   RefreshCw,
   RotateCcw,
@@ -19,6 +20,7 @@ import type {
   AiExerciseGradeResult,
   AiGradeResult,
   CardRecord,
+  ExerciseTextDirection,
   Note,
   Rating,
   Settings,
@@ -41,12 +43,35 @@ const RATING_LABELS: Record<Rating, string> = {
   4: 'Easy',
 };
 
+const DIRECTION_OPTIONS: { value: ExerciseTextDirection; label: string }[] = [
+  { value: 'auto', label: 'Auto' },
+  { value: 'rtl', label: 'RTL' },
+  { value: 'ltr', label: 'LTR' },
+];
+
+/** Determine the dominant script without letting English UI labels bias the result. */
+function detectExerciseTextDirection(exercise: AiCardExercise | null): 'rtl' | 'ltr' {
+  if (!exercise) return 'ltr';
+  const learnerText = [
+    exercise.title,
+    exercise.scenario,
+    exercise.task,
+    ...exercise.hints,
+    exercise.referenceSolution,
+  ].join(' ');
+  const rtlCharacters = learnerText.match(/[\u0590-\u08ff\ufb1d-\ufdff\ufe70-\ufefc]/g)?.length ?? 0;
+  const ltrCharacters = learnerText.match(/[A-Za-z\u00c0-\u024f\u0370-\u052f]/g)?.length ?? 0;
+  return rtlCharacters > ltrCharacters ? 'rtl' : 'ltr';
+}
+
 export function ExerciseMode({
   card,
   note,
   settings,
   frontText,
   backText,
+  textDirection,
+  onTextDirectionChange,
   onComplete,
   onBusyChange,
 }: {
@@ -55,6 +80,8 @@ export function ExerciseMode({
   settings: Settings;
   frontText: string;
   backText: string;
+  textDirection: ExerciseTextDirection;
+  onTextDirectionChange: (direction: ExerciseTextDirection) => void;
   onComplete: (rating: Rating, result: AiGradeResult) => void;
   onBusyChange: (busy: boolean) => void;
 }) {
@@ -71,6 +98,12 @@ export function ExerciseMode({
   const answerBox = useRef<HTMLTextAreaElement>(null);
 
   const busy = phase === 'generating' || phase === 'grading';
+  const detectedTextDirection = useMemo(
+    () => detectExerciseTextDirection(exercise),
+    [exercise],
+  );
+  const resolvedTextDirection =
+    textDirection === 'auto' ? detectedTextDirection : textDirection;
 
   useEffect(() => {
     onBusyChange(busy);
@@ -279,18 +312,43 @@ export function ExerciseMode({
             <span className="exercise-depth-label">Reason, decide, and explain</span>
           </div>
         </div>
-        <button
-          className={`question-card-toggle ${showCard ? 'is-open' : ''}`}
-          onClick={() => setShowCard((shown) => !shown)}
-          aria-expanded={showCard}
-          aria-controls="exercise-source-card"
-        >
-          <span className="question-toggle-icons" aria-hidden="true">
-            <Eye size={16} className="question-toggle-show" />
-            <EyeOff size={16} className="question-toggle-hide" />
-          </span>
-          {showCard ? 'Hide card' : 'Show card'} <kbd>C</kbd>
-        </button>
+        <div className="exercise-header-actions">
+          <div
+            className="exercise-direction-control"
+            role="group"
+            aria-label="Exercise text direction"
+            dir="ltr"
+          >
+            <Languages size={15} aria-hidden="true" />
+            {DIRECTION_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                className={textDirection === option.value ? 'active' : ''}
+                onClick={() => onTextDirectionChange(option.value)}
+                aria-pressed={textDirection === option.value}
+                title={
+                  option.value === 'auto'
+                    ? `Automatic direction — currently detected ${detectedTextDirection.toUpperCase()}`
+                    : `Force ${option.label} text direction`
+                }
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <button
+            className={`question-card-toggle ${showCard ? 'is-open' : ''}`}
+            onClick={() => setShowCard((shown) => !shown)}
+            aria-expanded={showCard}
+            aria-controls="exercise-source-card"
+          >
+            <span className="question-toggle-icons" aria-hidden="true">
+              <Eye size={16} className="question-toggle-show" />
+              <EyeOff size={16} className="question-toggle-hide" />
+            </span>
+            {showCard ? 'Hide card' : 'Show card'} <kbd>C</kbd>
+          </button>
+        </div>
       </header>
 
       {exercise.usesSourceVisual && (
@@ -301,7 +359,11 @@ export function ExerciseMode({
       )}
 
       {showCard && (
-        <div id="exercise-source-card" className="question-card-content exercise-source-card anim-in">
+        <div
+          id="exercise-source-card"
+          className="question-card-content exercise-source-card anim-in"
+          dir={resolvedTextDirection}
+        >
           <div className="question-card-field">
             <span className="field-label">Card prompt</span>
             <FieldContent text={frontText} />
@@ -314,7 +376,7 @@ export function ExerciseMode({
         </div>
       )}
 
-      <article className="exercise-challenge anim-in">
+      <article className="exercise-challenge anim-in" dir={resolvedTextDirection}>
         <div className="exercise-challenge-heading">
           <span className="exercise-eyebrow">Challenge</span>
           <h2>{exercise.title}</h2>
@@ -335,7 +397,7 @@ export function ExerciseMode({
       {!result && (
         <section className="exercise-workspace anim-in">
           <div className="exercise-answer-heading">
-            <div>
+            <div dir={resolvedTextDirection}>
               <span className="field-label">Your solution</span>
               <p>Show the reasoning, intermediate steps, and final conclusion.</p>
             </div>
@@ -355,7 +417,11 @@ export function ExerciseMode({
           </div>
 
           {visibleHints > 0 && (
-            <ol className="exercise-hints" aria-label="Revealed hints">
+            <ol
+              className="exercise-hints"
+              aria-label="Revealed hints"
+              dir={resolvedTextDirection}
+            >
               {exercise.hints.slice(0, visibleHints).map((hint, index) => (
                 <li
                   key={`${index}-${hint}`}
@@ -382,6 +448,7 @@ export function ExerciseMode({
               }
             }}
             disabled={phase === 'grading'}
+            dir={resolvedTextDirection}
             rows={8}
           />
           {error && <div className="ai-error" role="alert">{error}</div>}
@@ -412,7 +479,7 @@ export function ExerciseMode({
 
       {result && (
         <section className="exercise-result anim-in">
-          <div className={`ai-result ai-${result.verdict}`}>
+          <div className={`ai-result ai-${result.verdict}`} dir={resolvedTextDirection}>
             <div className="ai-result-head">
               <div className="ai-score-ring" style={{ ['--score' as string]: result.score }}>
                 <span>{result.score}</span>
@@ -437,7 +504,7 @@ export function ExerciseMode({
             </div>
           </div>
 
-          <div className="exercise-rubric">
+          <div className="exercise-rubric" dir={resolvedTextDirection}>
             <div className="exercise-section-head">
               <div>
                 <span className="exercise-eyebrow">Reasoning coverage</span>
@@ -466,7 +533,7 @@ export function ExerciseMode({
             </ul>
           </div>
 
-          <div className="exercise-solution-comparison">
+          <div className="exercise-solution-comparison" dir={resolvedTextDirection}>
             <div>
               <span className="field-label">Your solution</span>
               <p><InlineContent text={answer} /></p>

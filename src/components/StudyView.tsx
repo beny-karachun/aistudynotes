@@ -22,11 +22,12 @@ import {
   MessageCircleQuestion,
   RefreshCw,
 } from 'lucide-react';
-import { db } from '../db';
+import { db, saveSettings } from '../db';
 import type {
   AiCardQuestion,
   AiGradeResult,
   CardRecord,
+  ExerciseTextDirection,
   Note,
   Rating,
   Settings,
@@ -142,12 +143,14 @@ export function StudyView({
   settings,
   onExit,
   onChanged,
+  onSettingsChanged,
 }: {
   /** null = study the whole collection */
   deckId: string | null;
   settings: Settings;
   onExit: () => void;
   onChanged: () => void;
+  onSettingsChanged: () => void;
 }) {
   const toast = useToast();
   const decks = useLiveQuery(() => db.decks.toArray(), []);
@@ -161,6 +164,9 @@ export function StudyView({
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
   const [exerciseBusy, setExerciseBusy] = useState(false);
+  const [exerciseTextDirection, setExerciseTextDirection] = useState<ExerciseTextDirection>(
+    settings.exerciseTextDirection,
+  );
   const [questionItems, setQuestionItems] = useState<QuestionItem[]>([]);
   const [questionPhase, setQuestionPhase] = useState<QuestionPhase>('idle');
   const [questionError, setQuestionError] = useState<string | null>(null);
@@ -289,6 +295,18 @@ export function StudyView({
     questionPhase === 'loading' || questionItems.some((item) => item.grading);
 
   const reversed = card?.ord === 1 && note?.type === 'basicReversed';
+
+  useEffect(() => {
+    setExerciseTextDirection(settings.exerciseTextDirection);
+  }, [settings.exerciseTextDirection]);
+
+  const changeExerciseTextDirection = useCallback(
+    (direction: ExerciseTextDirection) => {
+      setExerciseTextDirection(direction);
+      void saveSettings({ exerciseTextDirection: direction }).then(onSettingsChanged);
+    },
+    [onSettingsChanged],
+  );
 
   const rate = useCallback(
     async (rating: Rating, ai?: AiGradeResult) => {
@@ -919,6 +937,8 @@ export function StudyView({
                 settings={settings}
                 frontText={frontText}
                 backText={backText}
+                textDirection={exerciseTextDirection}
+                onTextDirectionChange={changeExerciseTextDirection}
                 onBusyChange={setExerciseBusy}
                 onComplete={(rating, result) => void rate(rating, result)}
               />

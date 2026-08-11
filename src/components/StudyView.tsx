@@ -102,14 +102,6 @@ function aggregateQuestionAttempts(attempts: QuestionAttempt[]): AiGradeResult |
   };
 }
 
-function imageTokensForNote(note: Note): string {
-  const ids = new Set<string>();
-  for (const field of [note.front, note.back]) {
-    for (const match of field.matchAll(/\[img:([a-zA-Z0-9-]+)\]/g)) ids.add(match[1]);
-  }
-  return [...ids].map((id) => `[img:${id}]`).join('\n');
-}
-
 /**
  * The session's cards in serving order — due learning first, then the main
  * queue, then learning cards due later today. Used by the free forward/back
@@ -702,7 +694,6 @@ export function StudyView({
     }
     return reversed ? note.front : note.back;
   })();
-  const cardImageTokens = note ? imageTokensForNote(note) : '';
   const currentQuestionNumber =
     questionPhase === 'result' ? questionAttempts.length : questionAttempts.length + 1;
   const questionRatingLabel = questionSummary
@@ -898,11 +889,6 @@ export function StudyView({
                 <div className="question-text">
                   <InlineContent text={cardQuestion.question} />
                 </div>
-                {cardQuestion.showCardImages && cardImageTokens && (
-                  <div className="question-images">
-                    <FieldContent text={cardImageTokens} />
-                  </div>
-                )}
                 {showQuestionCard && (
                   <div id="question-card-content" className="question-card-content anim-in">
                     <div className="question-card-field">

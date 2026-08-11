@@ -352,12 +352,8 @@ const CARD_QUESTION_SCHEMA = {
       type: 'string',
       description: 'A concise but complete reference answer supported by the card content.',
     },
-    showCardImages: {
-      type: 'boolean',
-      description: 'True only when seeing an attached card image is necessary to answer the question.',
-    },
   },
-  required: ['question', 'expectedAnswer', 'showCardImages'],
+  required: ['question', 'expectedAnswer'],
 } as const;
 
 export interface GenerateCardQuestionRequest {
@@ -415,7 +411,7 @@ export async function generateCardQuestion(
   const previous = req.previousQuestions.map((q) => q.trim()).filter(Boolean).slice(-10);
   const parts: GeminiPart[] = [
     {
-      text: `You are running an active-recall study session. Create exactly one fresh question about the supplied flashcard. The question and reference answer must be supported entirely by the card content; never add outside facts. Test understanding, a relationship, a definition, a consequence explicitly stated in the card, or a useful rephrasing. Do not mention "the card", its front/back, or ask what the card says. Prefer a different angle from the original wording when the content supports one. If the card contains only one atomic fact, rephrase that fact instead of inventing detail. Do not reveal the answer in the question. Set "showCardImages" to true only if the learner must see an attached image to answer; otherwise false. ${outputLanguageInstruction(req.language, 'both "question" and "expectedAnswer"')}`,
+      text: `You are running an active-recall study session. Create exactly one fresh question about the supplied flashcard. The question and reference answer must be supported entirely by the card content; never add outside facts. Test understanding, a relationship, a definition, a consequence explicitly stated in the card, or a useful rephrasing. Do not mention "the card", its front/back, or ask what the card says. Prefer a different angle from the original wording when the content supports one. If the card contains only one atomic fact, rephrase that fact instead of inventing detail. Do not reveal the answer in the question. Attached images may help you understand the source, but the learner will not see them with the question. The question must be fully answerable without viewing an image: never ask the learner to identify, label, read, or inspect one. ${outputLanguageInstruction(req.language, 'both "question" and "expectedAnswer"')}`,
     },
     ...(await partsForCardContent(req.note)),
   ];
@@ -440,7 +436,6 @@ export async function generateCardQuestion(
   return {
     question,
     expectedAnswer,
-    showCardImages: parsed.showCardImages === true,
     model: apiModel + (thinkingLevel ? ` (thinking: ${thinkingLevel})` : ''),
   };
 }

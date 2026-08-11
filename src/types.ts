@@ -178,8 +178,6 @@ export interface AiCardQuestion {
   question: string;
   /** Kept hidden until grading; used as the grounded reference answer. */
   expectedAnswer: string;
-  /** Whether the learner needs to see the card's images to answer. */
-  showCardImages: boolean;
   model: string;
 }
 

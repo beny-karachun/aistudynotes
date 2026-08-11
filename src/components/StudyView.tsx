@@ -9,6 +9,7 @@ import {
   Undo2,
   Pencil,
   EyeOff,
+  Eye,
   PauseCircle,
   Flag,
   Sparkles,
@@ -149,6 +150,7 @@ export function StudyView({
   const [questionAttempts, setQuestionAttempts] = useState<QuestionAttempt[]>([]);
   const [questionPhase, setQuestionPhase] = useState<QuestionPhase>('idle');
   const [questionError, setQuestionError] = useState<string | null>(null);
+  const [showQuestionCard, setShowQuestionCard] = useState(false);
   const [editing, setEditing] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [finished, setFinished] = useState(false);
@@ -170,6 +172,7 @@ export function StudyView({
     setQuestionAttempts([]);
     setQuestionPhase('idle');
     setQuestionError(null);
+    setShowQuestionCard(false);
   }, []);
 
   const presentFrom = useCallback(
@@ -632,6 +635,11 @@ export function StudyView({
         void setFlag(parseInt(e.key) as 1 | 2 | 3 | 4);
         return;
       }
+      if (mode === 'questions' && cardQuestion && (e.key === 'c' || e.key === 'C')) {
+        e.preventDefault();
+        setShowQuestionCard((shown) => !shown);
+        return;
+      }
       if (mode === 'questions' && questionPhase === 'result') {
         if (e.key === 'n' || e.key === 'N') {
           e.preventDefault();
@@ -664,7 +672,7 @@ export function StudyView({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [card, phase, mode, aiResult, questionPhase, editing, showShortcuts, rate, undo, bury, suspend, setFlag, submitAiAnswer, submitQuestionAnswer, askAnotherQuestion, finishQuestionCard, skipBy]);
+  }, [card, phase, mode, aiResult, cardQuestion, questionPhase, editing, showShortcuts, rate, undo, bury, suspend, setFlag, submitAiAnswer, submitQuestionAnswer, askAnotherQuestion, finishQuestionCard, skipBy]);
 
   // Focus the AI answer box when a new question appears
   useEffect(() => {
@@ -868,10 +876,24 @@ export function StudyView({
             {mode === 'questions' && cardQuestion && questionPhase !== 'loading' && (
               <div className="question-prompt anim-in" key={cardQuestion.question}>
                 <div className="question-prompt-head">
-                  <span className="question-icon-wrap" aria-hidden="true">
-                    <MessageCircleQuestion size={20} />
-                  </span>
-                  <span className="question-eyebrow">AI question {currentQuestionNumber}</span>
+                  <div className="question-prompt-identity">
+                    <span className="question-icon-wrap" aria-hidden="true">
+                      <MessageCircleQuestion size={20} />
+                    </span>
+                    <span className="question-eyebrow">AI question {currentQuestionNumber}</span>
+                  </div>
+                  <button
+                    className={`question-card-toggle ${showQuestionCard ? 'is-open' : ''}`}
+                    onClick={() => setShowQuestionCard((shown) => !shown)}
+                    aria-expanded={showQuestionCard}
+                    aria-controls="question-card-content"
+                  >
+                    <span className="question-toggle-icons" aria-hidden="true">
+                      <Eye size={16} className="question-toggle-show" />
+                      <EyeOff size={16} className="question-toggle-hide" />
+                    </span>
+                    {showQuestionCard ? 'Hide card' : 'Show card'} <kbd>C</kbd>
+                  </button>
                 </div>
                 <div className="question-text">
                   <InlineContent text={cardQuestion.question} />
@@ -879,6 +901,19 @@ export function StudyView({
                 {cardQuestion.showCardImages && cardImageTokens && (
                   <div className="question-images">
                     <FieldContent text={cardImageTokens} />
+                  </div>
+                )}
+                {showQuestionCard && (
+                  <div id="question-card-content" className="question-card-content anim-in">
+                    <div className="question-card-field">
+                      <span className="field-label">Card prompt</span>
+                      <FieldContent text={frontText} />
+                    </div>
+                    <div className="question-card-divider" />
+                    <div className="question-card-field">
+                      <span className="field-label">Card answer</span>
+                      <FieldContent text={backText} />
+                    </div>
                   </div>
                 )}
               </div>
@@ -1144,6 +1179,7 @@ export function StudyView({
                 ['← →', 'Previous / next card without answering'],
                 ['Ctrl+Enter', 'Submit answer for AI grading'],
                 ['H', 'Hide a revealed answer'],
+                ['C', 'Show or hide card content in AI Questions'],
                 ['N', 'Ask another AI question on this card'],
                 ['U', 'Undo last review'],
                 ['E', 'Edit current note'],

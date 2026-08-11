@@ -1,5 +1,7 @@
 import type {
+  AiCardExercise,
   AiCardQuestion,
+  AiExerciseGradeResult,
   AiGradeResult,
   AiStrictness,
   GeminiModelOption,
@@ -369,6 +371,84 @@ const CARD_QUESTIONS_SCHEMA = {
   required: ['questions'],
 } as const;
 
+const CARD_EXERCISE_SCHEMA = {
+  type: 'object',
+  properties: {
+    title: {
+      type: 'string',
+      description: 'A short, specific title for the applied challenge.',
+    },
+    scenario: {
+      type: 'string',
+      description: 'The situation and any neutral data the learner needs in order to solve it.',
+    },
+    task: {
+      type: 'string',
+      description: 'A challenging instruction that requires reasoning with the card knowledge.',
+    },
+    evaluationCriteria: {
+      type: 'array',
+      minItems: 2,
+      maxItems: 6,
+      items: { type: 'string' },
+      description:
+        'Hidden, independently gradable requirements that collectively cover every relevant fact or relationship from the card.',
+    },
+    hints: {
+      type: 'array',
+      minItems: 2,
+      maxItems: 3,
+      items: { type: 'string' },
+      description:
+        'Progressive hints, from a gentle strategic nudge to a more concrete direction, without giving the final answer.',
+    },
+    referenceSolution: {
+      type: 'string',
+      description:
+        'A complete worked solution that explicitly demonstrates every evaluation criterion.',
+    },
+    usesSourceVisual: {
+      type: 'boolean',
+      description:
+        'True only when the exercise cannot be solved without inspecting an image attached to the source card.',
+    },
+  },
+  required: [
+    'title',
+    'scenario',
+    'task',
+    'evaluationCriteria',
+    'hints',
+    'referenceSolution',
+    'usesSourceVisual',
+  ],
+} as const;
+
+const EXERCISE_GRADE_SCHEMA = {
+  type: 'object',
+  properties: {
+    ...GRADE_SCHEMA.properties,
+    criterionResults: {
+      type: 'array',
+      minItems: 2,
+      maxItems: 6,
+      items: {
+        type: 'object',
+        properties: {
+          criterionNumber: { type: 'integer', minimum: 1, maximum: 6 },
+          met: { type: 'boolean' },
+          feedback: {
+            type: 'string',
+            description: 'One concise sentence explaining how the response did on this criterion.',
+          },
+        },
+        required: ['criterionNumber', 'met', 'feedback'],
+      },
+    },
+  },
+  required: [...GRADE_SCHEMA.required, 'criterionResults'],
+} as const;
+
 export interface GenerateCardQuestionsRequest {
   note: Note;
   previousQuestions: string[];
@@ -382,6 +462,25 @@ export interface GradeCardQuestionRequest {
   note: Note;
   question: AiCardQuestion;
   userAnswer: string;
+  apiKey: string;
+  model: string;
+  strictness: AiStrictness;
+  language?: string;
+}
+
+export interface GenerateCardExerciseRequest {
+  note: Note;
+  previousTasks: string[];
+  apiKey: string;
+  model: string;
+  language?: string;
+}
+
+export interface GradeCardExerciseRequest {
+  note: Note;
+  exercise: AiCardExercise;
+  userAnswer: string;
+  hintsUsed: number;
   apiKey: string;
   model: string;
   strictness: AiStrictness;
@@ -501,6 +600,158 @@ export async function gradeCardQuestion(req: GradeCardQuestionRequest): Promise<
       : [],
     suggestedRating,
     model: apiModel + (thinkingLevel ? ` (thinking: ${thinkingLevel})` : ''),
+  };
+}
+
+/** Create a card-grounded transfer problem that exercises all meaningful knowledge in the card. */
+export async function generateCardExercise(
+  req: GenerateCardExerciseRequest,
+): Promise<AiCardExercise> {
+  if (!req.apiKey) {
+    throw new GeminiError('No API key configured. Add your Gemini API key in Settings.');
+  }
+
+  const previous = req.previousTasks.map((task) => task.trim()).filter(Boolean).slice(-6);
+  const parts: GeminiPart[] = [
+    {
+      text: `You are designing one rigorous applied exercise from a single flashcard. Identify every meaningful fact, concept, rule, relationship, or procedure supported by the source, then create one coherent problem that requires the learner to use them in reasoning rather than merely repeat them. Choose the most natural format for the subject: case analysis, diagnosis, prediction, calculation, decision with justification, error correction, construction, or proof. The task must be more demanding than a direct recall question and the hidden evaluation criteria must collectively cover all relevant source knowledge. You may introduce neutral scenario details, quantities, or assumptions needed to make the problem solvable, but state them explicitly and never require outside domain facts. If the card contains only one atomic fact, create a plausible transfer or error-analysis problem that genuinely applies it without padding or invented knowledge. Keep the challenge appropriately scoped for one written response. The reference solution must show the reasoning and satisfy every criterion. Hints must be progressive and must not reveal the final conclusion. Attached images are valid source material: set usesSourceVisual to true only when the learner must inspect one, refer to it as the source visual, and do not reproduce or describe it in a way that gives away the solution. The source card starts hidden but can be deliberately revealed. Never mention card front/back or instruct the learner to recite the card. ${outputLanguageInstruction(req.language, 'all learner-facing text, hints, criteria, and the reference solution')}`,
+    },
+    ...(await partsForCardContent(req.note)),
+  ];
+  if (previous.length > 0) {
+    parts.push({
+      text: `EXERCISES ALREADY USED — create a meaningfully different application, scenario, and reasoning path while remaining grounded in the same source knowledge:\n${previous.map((task, index) => `${index + 1}. ${task}`).join('\n')}`,
+    });
+  }
+
+  const { parsed, apiModel, thinkingLevel } = await geminiJson(
+    req.apiKey,
+    req.model,
+    parts,
+    CARD_EXERCISE_SCHEMA,
+    { temperature: 1.05 },
+  );
+  const cleanList = (value: unknown, max: number) =>
+    Array.isArray(value)
+      ? [...new Set(value.map(String).map((item) => item.trim()).filter(Boolean))].slice(0, max)
+      : [];
+  const evaluationCriteria = cleanList(parsed.evaluationCriteria, 6);
+  const hints = cleanList(parsed.hints, 3);
+  const title = String(parsed.title ?? '').trim();
+  const scenario = String(parsed.scenario ?? '').trim();
+  const task = String(parsed.task ?? '').trim();
+  const referenceSolution = String(parsed.referenceSolution ?? '').trim();
+  if (
+    !title ||
+    !scenario ||
+    !task ||
+    !referenceSolution ||
+    evaluationCriteria.length < 2 ||
+    hints.length < 2
+  ) {
+    throw new GeminiError('Gemini did not return a complete applied exercise. Try again.');
+  }
+
+  return {
+    title,
+    scenario,
+    task,
+    evaluationCriteria,
+    hints,
+    referenceSolution,
+    usesSourceVisual: parsed.usesSourceVisual === true,
+    model: apiModel + (thinkingLevel ? ` (thinking: ${thinkingLevel})` : ''),
+  };
+}
+
+/** Grade the learner's reasoning against every hidden requirement in an applied exercise. */
+export async function gradeCardExercise(
+  req: GradeCardExerciseRequest,
+): Promise<AiExerciseGradeResult> {
+  if (!req.apiKey) {
+    throw new GeminiError('No API key configured. Add your Gemini API key in Settings.');
+  }
+
+  const criteria = req.exercise.evaluationCriteria
+    .map((criterion, index) => `${index + 1}. ${criterion}`)
+    .join('\n');
+  const parts: GeminiPart[] = [
+    {
+      text: `You are grading an applied exercise for understanding and reasoning, not word-for-word similarity. Evaluate the student's full solution against every numbered criterion and the grounded reference solution. Accept sound alternative approaches, equivalent math, and correct conclusions expressed differently. Do not demand facts absent from the source or explicitly stated scenario. Return exactly one criterion result for each numbered criterion. Mark the overall verdict correct only when every criterion is met and the reasoning contains no material factual or logical error. A response with meaningful understanding but one or more unmet criteria is partially_correct; a response that cannot apply the core knowledge is incorrect. ${req.hintsUsed > 0 ? `The learner revealed ${req.hintsUsed} progressive hint${req.hintsUsed === 1 ? '' : 's'}; acknowledge that assistance when choosing the spaced-repetition rating.` : 'The learner solved without revealing a hint.'} ${outputLanguageInstruction(req.language, 'feedback, keyPointsMissed, and each criterion result feedback')} ${STRICTNESS_PROMPTS[req.strictness]}`,
+    },
+    ...(await partsForCardContent(req.note)),
+    { text: `EXERCISE TITLE:\n${req.exercise.title}` },
+    { text: `SCENARIO:\n${req.exercise.scenario}` },
+    { text: `TASK:\n${req.exercise.task}` },
+    { text: `NUMBERED EVALUATION CRITERIA:\n${criteria}` },
+    { text: `REFERENCE SOLUTION:\n${req.exercise.referenceSolution}` },
+    { text: `STUDENT'S SOLUTION:\n${req.userAnswer.trim() || '(blank)'}` },
+  ];
+
+  const { parsed, apiModel, thinkingLevel } = await geminiJson(
+    req.apiKey,
+    req.model,
+    parts,
+    EXERCISE_GRADE_SCHEMA,
+  );
+  const rawResults = Array.isArray(parsed.criterionResults)
+    ? (parsed.criterionResults as unknown[])
+    : [];
+  const byNumber = new Map<number, { met: boolean; feedback: string }>();
+  for (const raw of rawResults) {
+    const item = raw as { criterionNumber?: unknown; met?: unknown; feedback?: unknown };
+    const criterionNumber = clampInt(item.criterionNumber, 1, 6, 0);
+    if (!criterionNumber || byNumber.has(criterionNumber)) continue;
+    byNumber.set(criterionNumber, {
+      met: item.met === true,
+      feedback: String(item.feedback ?? '').trim(),
+    });
+  }
+  const criterionResults = req.exercise.evaluationCriteria.map((criterion, index) => {
+    const result = byNumber.get(index + 1);
+    return {
+      criterion,
+      met: result?.met ?? false,
+      feedback:
+        result?.feedback ||
+        (result?.met
+          ? 'This requirement was demonstrated.'
+          : 'This requirement was not demonstrated in the submitted solution.'),
+    };
+  });
+  const allCriteriaMet = criterionResults.every((result) => result.met);
+  const score = clampInt(parsed.score, 0, 100, 0);
+  const parsedVerdict = ['correct', 'partially_correct', 'incorrect'].includes(
+    String(parsed.verdict),
+  )
+    ? (parsed.verdict as AiGradeResult['verdict'])
+    : score >= 80
+      ? 'correct'
+      : score >= 40
+        ? 'partially_correct'
+        : 'incorrect';
+  const verdict = parsedVerdict === 'correct' && !allCriteriaMet ? 'partially_correct' : parsedVerdict;
+  let suggestedRating = clampInt(
+    parsed.suggestedRating,
+    1,
+    4,
+    score >= 60 ? 3 : 1,
+  ) as Rating;
+  if (verdict !== 'correct' || req.hintsUsed > 0) {
+    suggestedRating = Math.min(suggestedRating, 3) as Rating;
+  }
+  if (verdict === 'incorrect') suggestedRating = Math.min(suggestedRating, 2) as Rating;
+
+  return {
+    score,
+    verdict,
+    feedback: String(parsed.feedback ?? ''),
+    keyPointsMissed: Array.isArray(parsed.keyPointsMissed)
+      ? parsed.keyPointsMissed.map(String)
+      : [],
+    suggestedRating,
+    model: apiModel + (thinkingLevel ? ` (thinking: ${thinkingLevel})` : ''),
+    criterionResults,
   };
 }
 

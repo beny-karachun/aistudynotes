@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   ArrowRight,
   BrainCircuit,
+  Dumbbell,
   ChevronLeft,
   ChevronRight,
   Undo2,
@@ -54,6 +55,7 @@ import {
 import { FieldContent, InlineContent } from './FieldContent';
 import { Modal, useToast } from './ui';
 import { NoteEditModal } from './NoteEditModal';
+import { ExerciseMode } from './ExerciseMode';
 
 type Phase = 'question' | 'grading' | 'answer';
 type QuestionPhase = 'idle' | 'loading' | 'ready' | 'error';
@@ -158,6 +160,7 @@ export function StudyView({
   const [aiResult, setAiResult] = useState<AiGradeResult | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
+  const [exerciseBusy, setExerciseBusy] = useState(false);
   const [questionItems, setQuestionItems] = useState<QuestionItem[]>([]);
   const [questionPhase, setQuestionPhase] = useState<QuestionPhase>('idle');
   const [questionError, setQuestionError] = useState<string | null>(null);
@@ -378,7 +381,7 @@ export function StudyView({
   // Free navigation: browse the session's cards without answering.
   const skipBy = useCallback(
     (delta: number) => {
-      if (!queue || aiBusy || questionBusy) return;
+      if (!queue || aiBusy || questionBusy || exerciseBusy) return;
       const candidates = orderedCandidates(queue, Date.now());
       if (candidates.length === 0) return;
       const curIdx = card ? candidates.findIndex((c) => c.id === card.id) : -1;
@@ -394,7 +397,7 @@ export function StudyView({
       setWaitingUntil(null);
       cardStart.current = Date.now();
     },
-    [queue, card, aiBusy, questionBusy, resetQuestionSession],
+    [queue, card, aiBusy, questionBusy, exerciseBusy, resetQuestionSession],
   );
 
   const navInfo = useMemo(() => {
@@ -812,6 +815,13 @@ export function StudyView({
             >
               <BrainCircuit size={13} /> Questions
             </button>
+            <button
+              className={mode === 'exercise' ? 'active' : ''}
+              onClick={() => changeMode('exercise')}
+              title="Apply the card’s knowledge to a challenging problem"
+            >
+              <Dumbbell size={13} /> Exercise
+            </button>
           </div>
           {navInfo.total > 1 && (
             <span className="card-nav" role="group" aria-label="Browse cards without answering">
@@ -820,7 +830,7 @@ export function StudyView({
                 title="Previous card — no answer recorded (←)"
                 aria-label="Previous card"
                 onClick={() => skipBy(-1)}
-                disabled={aiBusy || questionBusy}
+                disabled={aiBusy || questionBusy || exerciseBusy}
               >
                 <ChevronLeft size={17} />
               </button>
@@ -832,7 +842,7 @@ export function StudyView({
                 title="Next card — no answer recorded (→)"
                 aria-label="Next card"
                 onClick={() => skipBy(1)}
-                disabled={aiBusy || questionBusy}
+                disabled={aiBusy || questionBusy || exerciseBusy}
               >
                 <ChevronRight size={17} />
               </button>
@@ -896,8 +906,23 @@ export function StudyView({
 
       {card && note && (
         <div className="study-card card-panel" key={card.id + phase + mode}>
-          <div className={`study-question ${mode === 'questions' ? 'generated-question' : ''}`}>
-            {mode !== 'questions' && <FieldContent text={frontText} />}
+          <div
+            className={`study-question ${mode === 'questions' || mode === 'exercise' ? 'generated-question' : ''}`}
+          >
+            {mode !== 'questions' && mode !== 'exercise' && <FieldContent text={frontText} />}
+
+            {mode === 'exercise' && (
+              <ExerciseMode
+                key={`${card.id}:${cardStart.current}:${note.updatedAt}`}
+                card={card}
+                note={note}
+                settings={settings}
+                frontText={frontText}
+                backText={backText}
+                onBusyChange={setExerciseBusy}
+                onComplete={(rating, result) => void rate(rating, result)}
+              />
+            )}
 
             {mode === 'questions' && questionPhase === 'loading' && questionItems.length === 0 && (
               <div className="question-loading" role="status">
@@ -1296,8 +1321,9 @@ export function StudyView({
                 ['← →', 'Previous / next card without answering'],
                 ['Ctrl+Enter', 'Submit the focused AI answer'],
                 ['H', 'Hide a revealed answer'],
-                ['C', 'Show or hide card content in AI Questions'],
-                ['N', 'Generate more questions after completing the set'],
+                ['C', 'Show or hide the source card in AI modes'],
+                ['I', 'Reveal the next hint in Exercise mode'],
+                ['N', 'Generate another question set or exercise'],
                 ['U', 'Undo last review'],
                 ['E', 'Edit current note'],
                 ['-', 'Bury card until tomorrow'],

@@ -266,7 +266,7 @@ export function SettingsView({
 
         <label className="settings-field">
           <span className="field-label">Default answer mode when studying</span>
-          <div className="seg-control" role="group" aria-label="Default study mode">
+          <div className="seg-control study-mode-settings" role="group" aria-label="Default study mode">
             <button
               className={settings.defaultStudyMode === 'classic' ? 'active' : ''}
               onClick={() => void patch({ defaultStudyMode: 'classic' })}
@@ -284,6 +284,12 @@ export function SettingsView({
               onClick={() => void patch({ defaultStudyMode: 'questions' })}
             >
               AI questions
+            </button>
+            <button
+              className={settings.defaultStudyMode === 'exercise' ? 'active' : ''}
+              onClick={() => void patch({ defaultStudyMode: 'exercise' })}
+            >
+              Exercise
             </button>
           </div>
         </label>

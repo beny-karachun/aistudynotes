@@ -131,7 +131,7 @@ export interface GeminiModelOption {
 }
 
 export type AiStrictness = 'lenient' | 'moderate' | 'strict';
-export type StudyMode = 'classic' | 'ai' | 'questions';
+export type StudyMode = 'classic' | 'ai' | 'questions' | 'exercise';
 
 export interface Settings {
   id: 'app';
@@ -179,6 +179,32 @@ export interface AiCardQuestion {
   /** Kept hidden until grading; used as the grounded reference answer. */
   expectedAnswer: string;
   model: string;
+}
+
+/** A card-grounded problem that requires applying knowledge instead of recalling it directly. */
+export interface AiCardExercise {
+  title: string;
+  scenario: string;
+  task: string;
+  /** Hidden until grading so the rubric does not reveal the solution. */
+  evaluationCriteria: string[];
+  /** Progressive help ordered from a gentle nudge to a more concrete direction. */
+  hints: string[];
+  /** Kept hidden until grading. */
+  referenceSolution: string;
+  /** Whether solving the exercise requires inspecting an image in the source card. */
+  usesSourceVisual: boolean;
+  model: string;
+}
+
+export interface AiExerciseCriterionResult {
+  criterion: string;
+  met: boolean;
+  feedback: string;
+}
+
+export interface AiExerciseGradeResult extends AiGradeResult {
+  criterionResults: AiExerciseCriterionResult[];
 }
 
 // ---------- Study ----------

@@ -341,22 +341,35 @@ export async function gradeAnswer(req: GradeRequest): Promise<AiGradeResult> {
 
 // ---------- Fresh AI questions derived from a card ----------
 
-const CARD_QUESTION_SCHEMA = {
+const CARD_QUESTIONS_SCHEMA = {
   type: 'object',
   properties: {
-    question: {
-      type: 'string',
-      description: 'One clear, self-contained study question grounded only in the card content.',
-    },
-    expectedAnswer: {
-      type: 'string',
-      description: 'A concise but complete reference answer supported by the card content.',
+    questions: {
+      type: 'array',
+      minItems: 2,
+      maxItems: 5,
+      description:
+        'The smallest non-redundant set of questions that collectively tests every important fact in the card.',
+      items: {
+        type: 'object',
+        properties: {
+          question: {
+            type: 'string',
+            description: 'One clear study question grounded only in the card content.',
+          },
+          expectedAnswer: {
+            type: 'string',
+            description: 'A concise but complete reference answer supported by the card content.',
+          },
+        },
+        required: ['question', 'expectedAnswer'],
+      },
     },
   },
-  required: ['question', 'expectedAnswer'],
+  required: ['questions'],
 } as const;
 
-export interface GenerateCardQuestionRequest {
+export interface GenerateCardQuestionsRequest {
   note: Note;
   previousQuestions: string[];
   apiKey: string;
@@ -400,10 +413,10 @@ function outputLanguageInstruction(language: string | undefined, output: string)
     : `Write ${output} in ${language}, regardless of the language used by the card or student.`;
 }
 
-/** Create one varied question that can be answered entirely from the card. */
-export async function generateCardQuestion(
-  req: GenerateCardQuestionRequest,
-): Promise<AiCardQuestion> {
+/** Create a compact question set that collectively covers the card's testable content. */
+export async function generateCardQuestions(
+  req: GenerateCardQuestionsRequest,
+): Promise<AiCardQuestion[]> {
   if (!req.apiKey) {
     throw new GeminiError('No API key configured. Add your Gemini API key in Settings.');
   }
@@ -411,13 +424,13 @@ export async function generateCardQuestion(
   const previous = req.previousQuestions.map((q) => q.trim()).filter(Boolean).slice(-10);
   const parts: GeminiPart[] = [
     {
-      text: `You are running an active-recall study session. Create exactly one fresh question about the supplied flashcard. The question and reference answer must be supported entirely by the card content; never add outside facts. Test understanding, a relationship, a definition, a consequence explicitly stated in the card, or a useful rephrasing. Do not mention "the card", its front/back, or ask what the card says. Prefer a different angle from the original wording when the content supports one. If the card contains only one atomic fact, rephrase that fact instead of inventing detail. Do not reveal the answer in the question. Attached images are valid source material, and you may ask an image-grounded question when that meaningfully tests visual recall. The image starts hidden and the learner can deliberately reveal it with "Show card", so never claim they are already viewing it and never describe it so completely that the question gives away its own answer. ${outputLanguageInstruction(req.language, 'both "question" and "expectedAnswer"')}`,
+      text: `You are creating a short active-recall checkup from one flashcard. First identify every important, testable fact or relationship supported by the supplied content, then output the smallest non-redundant set of 2 to 5 questions that collectively tests all of them. The learner receives every question simultaneously and submits each answer independently, so every question must stand alone and must not reveal the answer to another question. Prefer one focused concept per question; related details may be grouped when needed to keep the set compact. If the card contains only one atomic fact, test it from at least two genuinely different recall directions without adding outside knowledge. Every question and reference answer must be supported entirely by the card content; never invent facts. Do not mention "the card", its front/back, or ask what the card says. Attached images are valid source material, and you may ask an image-grounded question when that meaningfully tests visual recall. Images start hidden and the learner can deliberately reveal them with "Show card", so never claim they are already viewing one and never describe an image so completely that a question gives away its own answer. ${outputLanguageInstruction(req.language, 'every "question" and "expectedAnswer"')}`,
     },
     ...(await partsForCardContent(req.note)),
   ];
   if (previous.length > 0) {
     parts.push({
-      text: `QUESTIONS ALREADY ASKED — create a meaningfully different question if the card supports it:\n${previous.map((q, i) => `${i + 1}. ${q}`).join('\n')}`,
+      text: `QUESTIONS ALREADY ASKED — make this new coverage set meaningfully different where the card supports it. If all facts have already been tested, use different recall directions without inventing new facts:\n${previous.map((q, i) => `${i + 1}. ${q}`).join('\n')}`,
     });
   }
 
@@ -425,19 +438,26 @@ export async function generateCardQuestion(
     req.apiKey,
     req.model,
     parts,
-    CARD_QUESTION_SCHEMA,
+    CARD_QUESTIONS_SCHEMA,
     { temperature: 1.1 },
   );
-  const question = String(parsed.question ?? '').trim();
-  const expectedAnswer = String(parsed.expectedAnswer ?? '').trim();
-  if (!question || !expectedAnswer) {
-    throw new GeminiError('Gemini returned an incomplete question. Try another one.');
+  const model = apiModel + (thinkingLevel ? ` (thinking: ${thinkingLevel})` : '');
+  const raw = Array.isArray(parsed.questions) ? (parsed.questions as unknown[]) : [];
+  const seen = new Set<string>();
+  const questions: AiCardQuestion[] = [];
+  for (const item of raw) {
+    const candidate = item as { question?: unknown; expectedAnswer?: unknown };
+    const question = String(candidate.question ?? '').trim();
+    const expectedAnswer = String(candidate.expectedAnswer ?? '').trim();
+    const normalized = question.toLocaleLowerCase();
+    if (!question || !expectedAnswer || seen.has(normalized)) continue;
+    seen.add(normalized);
+    questions.push({ question, expectedAnswer, model });
   }
-  return {
-    question,
-    expectedAnswer,
-    model: apiModel + (thinkingLevel ? ` (thinking: ${thinkingLevel})` : ''),
-  };
+  if (questions.length < 2) {
+    throw new GeminiError('Gemini did not return a complete question set. Try again.');
+  }
+  return questions.slice(0, 5);
 }
 
 /** Grade one submitted answer against its generated, card-grounded question. */

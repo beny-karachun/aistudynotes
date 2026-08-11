@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
   ArrowLeft,
+  ArrowRight,
+  BrainCircuit,
   ChevronLeft,
   ChevronRight,
   Undo2,
@@ -14,9 +16,20 @@ import {
   PartyPopper,
   Clock,
   Loader2,
+  ListPlus,
+  MessageCircleQuestion,
+  RefreshCw,
 } from 'lucide-react';
 import { db } from '../db';
-import type { AiGradeResult, CardRecord, Note, Rating, Settings } from '../types';
+import type {
+  AiCardQuestion,
+  AiGradeResult,
+  CardRecord,
+  Note,
+  Rating,
+  Settings,
+  StudyMode,
+} from '../types';
 import { CardState } from '../types';
 import {
   answerCard,
@@ -31,12 +44,24 @@ import {
   type StudyQueue,
 } from '../lib/scheduler';
 import { renderClozeBack, renderClozeFront } from '../lib/cloze';
-import { gradeAnswer, GeminiError } from '../lib/gemini';
+import {
+  generateCardQuestion,
+  gradeAnswer,
+  gradeCardQuestion,
+  GeminiError,
+} from '../lib/gemini';
 import { FieldContent, InlineContent } from './FieldContent';
 import { Modal, useToast } from './ui';
 import { NoteEditModal } from './NoteEditModal';
 
 type Phase = 'question' | 'grading' | 'answer';
+type QuestionPhase = 'idle' | 'loading' | 'question' | 'grading' | 'result' | 'error';
+
+interface QuestionAttempt {
+  question: AiCardQuestion;
+  answer: string;
+  result: AiGradeResult;
+}
 
 const RATING_META: { rating: Rating; label: string; className: string; key: string }[] = [
   { rating: 1, label: 'Again', className: 'rate-again', key: '1' },
@@ -46,6 +71,43 @@ const RATING_META: { rating: Rating; label: string; className: string; key: stri
 ];
 
 const FLAG_COLORS = ['transparent', '#ef4444', '#f97316', '#22c55e', '#3b82f6'];
+
+// React StrictMode mounts effects twice in development. Share an in-flight
+// first-question request so that this never spends a user's quota twice.
+const pendingInitialQuestions = new Map<string, Promise<AiCardQuestion>>();
+
+function aggregateQuestionAttempts(attempts: QuestionAttempt[]): AiGradeResult | null {
+  if (attempts.length === 0) return null;
+  const score = Math.round(
+    attempts.reduce((sum, attempt) => sum + attempt.result.score, 0) / attempts.length,
+  );
+  const rating = Math.max(
+    1,
+    Math.min(
+      4,
+      Math.round(
+        attempts.reduce((sum, attempt) => sum + attempt.result.suggestedRating, 0) /
+          attempts.length,
+      ),
+    ),
+  ) as Rating;
+  return {
+    score,
+    verdict: score >= 80 ? 'correct' : score >= 40 ? 'partially_correct' : 'incorrect',
+    feedback: `Average across ${attempts.length} AI-generated question${attempts.length === 1 ? '' : 's'}.`,
+    keyPointsMissed: attempts.flatMap((attempt) => attempt.result.keyPointsMissed),
+    suggestedRating: rating,
+    model: attempts.at(-1)?.result.model ?? attempts.at(-1)?.question.model ?? '',
+  };
+}
+
+function imageTokensForNote(note: Note): string {
+  const ids = new Set<string>();
+  for (const field of [note.front, note.back]) {
+    for (const match of field.matchAll(/\[img:([a-zA-Z0-9-]+)\]/g)) ids.add(match[1]);
+  }
+  return [...ids].map((id) => `[img:${id}]`).join('\n');
+}
 
 /**
  * The session's cards in serving order — due learning first, then the main
@@ -76,11 +138,17 @@ export function StudyView({
   const [card, setCard] = useState<CardRecord | null>(null);
   const [note, setNote] = useState<Note | null>(null);
   const [phase, setPhase] = useState<Phase>('question');
-  const [mode, setMode] = useState<'classic' | 'ai'>(settings.defaultStudyMode);
+  const [mode, setMode] = useState<StudyMode>(settings.defaultStudyMode);
   const [typedAnswer, setTypedAnswer] = useState('');
   const [aiResult, setAiResult] = useState<AiGradeResult | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
+  const [cardQuestion, setCardQuestion] = useState<AiCardQuestion | null>(null);
+  const [questionAnswer, setQuestionAnswer] = useState('');
+  const [questionResult, setQuestionResult] = useState<AiGradeResult | null>(null);
+  const [questionAttempts, setQuestionAttempts] = useState<QuestionAttempt[]>([]);
+  const [questionPhase, setQuestionPhase] = useState<QuestionPhase>('idle');
+  const [questionError, setQuestionError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [finished, setFinished] = useState(false);
@@ -89,13 +157,25 @@ export function StudyView({
   const cardStart = useRef(Date.now());
   const answerBox = useRef<HTMLTextAreaElement>(null);
   const busyRef = useRef(false);
+  const questionRequestToken = useRef(0);
 
   const deckById = useMemo(() => new Map((decks ?? []).map((d) => [d.id, d])), [decks]);
   const rootDeck = deckId !== null ? deckById.get(deckId) : undefined;
 
+  const resetQuestionSession = useCallback(() => {
+    questionRequestToken.current += 1;
+    setCardQuestion(null);
+    setQuestionAnswer('');
+    setQuestionResult(null);
+    setQuestionAttempts([]);
+    setQuestionPhase('idle');
+    setQuestionError(null);
+  }, []);
+
   const presentFrom = useCallback(
     (q: StudyQueue) => {
       const now = Date.now();
+      resetQuestionSession();
       const next = nextCard(q, now);
       if (next) {
         setCard(next);
@@ -116,7 +196,7 @@ export function StudyView({
         setWaitingUntil(null);
       }
     },
-    [],
+    [resetQuestionSession],
   );
 
   const loadQueue = useCallback(async () => {
@@ -164,13 +244,18 @@ export function StudyView({
       learnCount: queue.learning.length,
       reviewCount: queue.main.filter((c) => c.state !== CardState.New).length,
     };
-  }, [queue, card, phase]);
+  }, [queue]);
 
   const config = card ? (deckById.get(card.deckId)?.config ?? rootDeck?.config) : rootDeck?.config;
   const previews = useMemo(
     () => (card && config && phase !== 'question' ? intervalPreviews(card, config) : null),
     [card, config, phase],
   );
+  const questionSummary = useMemo(
+    () => aggregateQuestionAttempts(questionAttempts),
+    [questionAttempts],
+  );
+  const questionBusy = questionPhase === 'loading' || questionPhase === 'grading';
 
   const reversed = card?.ord === 1 && note?.type === 'basicReversed';
 
@@ -234,6 +319,7 @@ export function StudyView({
       q.main = [entry.before, ...q.main];
     }
     setQueue(q);
+    resetQuestionSession();
     setCard(entry.before);
     setPhase('question');
     setTypedAnswer('');
@@ -244,7 +330,7 @@ export function StudyView({
     cardStart.current = Date.now();
     onChanged();
     toast.push('success', 'Review undone.');
-  }, [queue, onChanged, toast]);
+  }, [queue, onChanged, resetQuestionSession, toast]);
 
   const skipCurrent = useCallback(
     (removeId: string) => {
@@ -264,12 +350,13 @@ export function StudyView({
   // Free navigation: browse the session's cards without answering.
   const skipBy = useCallback(
     (delta: number) => {
-      if (!queue || aiBusy) return;
+      if (!queue || aiBusy || questionPhase === 'loading' || questionPhase === 'grading') return;
       const candidates = orderedCandidates(queue, Date.now());
       if (candidates.length === 0) return;
       const curIdx = card ? candidates.findIndex((c) => c.id === card.id) : -1;
       const base = curIdx >= 0 ? curIdx : delta > 0 ? -1 : 0;
       const next = (((base + delta) % candidates.length) + candidates.length) % candidates.length;
+      resetQuestionSession();
       setCard(candidates[next]);
       setPhase('question');
       setTypedAnswer('');
@@ -279,7 +366,7 @@ export function StudyView({
       setWaitingUntil(null);
       cardStart.current = Date.now();
     },
-    [queue, card, aiBusy],
+    [queue, card, aiBusy, questionPhase, resetQuestionSession],
   );
 
   const navInfo = useMemo(() => {
@@ -314,6 +401,147 @@ export function StudyView({
     },
     [card],
   );
+
+  const changeMode = useCallback(
+    (nextMode: StudyMode) => {
+      if (nextMode === mode) return;
+      resetQuestionSession();
+      setPhase('question');
+      setTypedAnswer('');
+      setAiResult(null);
+      setAiError(null);
+      setMode(nextMode);
+    },
+    [mode, resetQuestionSession],
+  );
+
+  const loadCardQuestion = useCallback(
+    async (previousQuestions: string[]) => {
+      if (!card || !note || note.id !== card.noteId) return;
+      if (!settings.apiKey) {
+        setQuestionError('Add your Gemini API key in Settings to generate questions.');
+        setQuestionPhase('error');
+        return;
+      }
+
+      const token = ++questionRequestToken.current;
+      setCardQuestion(null);
+      setQuestionResult(null);
+      setQuestionAnswer('');
+      setQuestionError(null);
+      setQuestionPhase('loading');
+      const request = {
+        note,
+        previousQuestions,
+        apiKey: settings.apiKey,
+        model: settings.model,
+        language: settings.aiLanguage,
+      };
+
+      try {
+        let pending: Promise<AiCardQuestion>;
+        if (previousQuestions.length === 0) {
+          const cacheKey = [card.id, note.updatedAt, settings.model, settings.aiLanguage].join(':');
+          const existing = pendingInitialQuestions.get(cacheKey);
+          if (existing) {
+            pending = existing;
+          } else {
+            pending = generateCardQuestion(request);
+            pendingInitialQuestions.set(cacheKey, pending);
+            void pending.then(
+              () => pendingInitialQuestions.delete(cacheKey),
+              () => pendingInitialQuestions.delete(cacheKey),
+            );
+          }
+        } else {
+          pending = generateCardQuestion(request);
+        }
+        const generated = await pending;
+        if (questionRequestToken.current !== token) return;
+        setCardQuestion(generated);
+        setQuestionPhase('question');
+      } catch (e) {
+        if (questionRequestToken.current !== token) return;
+        setQuestionError(
+          e instanceof GeminiError ? e.message : 'Could not generate a question. Try again.',
+        );
+        setQuestionPhase('error');
+      }
+    },
+    [card, note, settings.apiKey, settings.model, settings.aiLanguage],
+  );
+
+  const submitQuestionAnswer = useCallback(async () => {
+    if (
+      !cardQuestion ||
+      !note ||
+      !questionAnswer.trim() ||
+      questionPhase !== 'question'
+    ) {
+      return;
+    }
+    if (!settings.apiKey) {
+      setQuestionError('Add your Gemini API key in Settings to grade answers.');
+      return;
+    }
+
+    const token = ++questionRequestToken.current;
+    setQuestionError(null);
+    setQuestionPhase('grading');
+    try {
+      const result = await gradeCardQuestion({
+        note,
+        question: cardQuestion,
+        userAnswer: questionAnswer,
+        apiKey: settings.apiKey,
+        model: settings.model,
+        strictness: settings.aiStrictness,
+        language: settings.aiLanguage,
+      });
+      if (questionRequestToken.current !== token) return;
+      setQuestionResult(result);
+      setQuestionAttempts((attempts) => [
+        ...attempts,
+        { question: cardQuestion, answer: questionAnswer.trim(), result },
+      ]);
+      setQuestionPhase('result');
+    } catch (e) {
+      if (questionRequestToken.current !== token) return;
+      setQuestionError(e instanceof GeminiError ? e.message : 'AI grading failed. Try again.');
+      setQuestionPhase('question');
+    }
+  }, [cardQuestion, note, questionAnswer, questionPhase, settings]);
+
+  const askAnotherQuestion = useCallback(() => {
+    void loadCardQuestion(questionAttempts.map((attempt) => attempt.question.question));
+  }, [loadCardQuestion, questionAttempts]);
+
+  const finishQuestionCard = useCallback(() => {
+    if (!questionSummary) return;
+    void rate(questionSummary.suggestedRating, questionSummary);
+  }, [questionSummary, rate]);
+
+  // Invalidate late AI responses when the component unmounts (including the
+  // development-only StrictMode remount).
+  useEffect(
+    () => () => {
+      questionRequestToken.current += 1;
+    },
+    [],
+  );
+
+  // Entering the mode or advancing to a card automatically asks the first question.
+  useEffect(() => {
+    if (
+      mode === 'questions' &&
+      card &&
+      note?.id === card.noteId &&
+      questionPhase === 'idle' &&
+      !cardQuestion
+    ) {
+      void loadCardQuestion([]);
+    }
+  }, [mode, card, note, questionPhase, cardQuestion, loadCardQuestion]);
 
   const submitAiAnswer = useCallback(async () => {
     if (!card || !note || aiBusy) return;
@@ -351,9 +579,14 @@ export function StudyView({
       const inField =
         e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement;
       if (inField) {
-        if (e.key === 'Enter' && e.ctrlKey && mode === 'ai' && phase === 'question') {
-          e.preventDefault();
-          void submitAiAnswer();
+        if (e.key === 'Enter' && e.ctrlKey) {
+          if (mode === 'ai' && phase === 'question') {
+            e.preventDefault();
+            void submitAiAnswer();
+          } else if (mode === 'questions' && questionPhase === 'question') {
+            e.preventDefault();
+            void submitQuestionAnswer();
+          }
         }
         // arrows in an EMPTY answer box are a caret no-op — use them to navigate
         if (
@@ -399,6 +632,21 @@ export function StudyView({
         void setFlag(parseInt(e.key) as 1 | 2 | 3 | 4);
         return;
       }
+      if (mode === 'questions' && questionPhase === 'result') {
+        if (e.key === 'n' || e.key === 'N') {
+          e.preventDefault();
+          askAnotherQuestion();
+        } else if (e.key === ' ' || e.key === 'Enter') {
+          e.preventDefault();
+          finishQuestionCard();
+        }
+        return;
+      }
+      if (phase === 'answer' && (e.key === 'h' || e.key === 'H')) {
+        e.preventDefault();
+        setPhase('question');
+        return;
+      }
       if (phase === 'question' && mode === 'classic' && (e.key === ' ' || e.key === 'Enter')) {
         e.preventDefault();
         setPhase('answer');
@@ -416,14 +664,17 @@ export function StudyView({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [card, phase, mode, aiResult, editing, showShortcuts, rate, undo, bury, suspend, setFlag, submitAiAnswer, skipBy]);
+  }, [card, phase, mode, aiResult, questionPhase, editing, showShortcuts, rate, undo, bury, suspend, setFlag, submitAiAnswer, submitQuestionAnswer, askAnotherQuestion, finishQuestionCard, skipBy]);
 
   // Focus the AI answer box when a new question appears
   useEffect(() => {
-    if (phase === 'question' && mode === 'ai') {
+    if (
+      (phase === 'question' && mode === 'ai') ||
+      (mode === 'questions' && questionPhase === 'question')
+    ) {
       answerBox.current?.focus();
     }
-  }, [phase, mode, card]);
+  }, [phase, mode, card, questionPhase, cardQuestion]);
 
   if (!queue || (deckId !== null && !rootDeck)) return <div className="view-pad">Loading…</div>;
 
@@ -443,6 +694,12 @@ export function StudyView({
     }
     return reversed ? note.front : note.back;
   })();
+  const cardImageTokens = note ? imageTokensForNote(note) : '';
+  const currentQuestionNumber =
+    questionPhase === 'result' ? questionAttempts.length : questionAttempts.length + 1;
+  const questionRatingLabel = questionSummary
+    ? RATING_META.find((item) => item.rating === questionSummary.suggestedRating)?.label
+    : null;
 
   const stateLabel =
     card?.state === CardState.New
@@ -466,17 +723,24 @@ export function StudyView({
           <div className="mode-toggle" role="group" aria-label="Answer mode">
             <button
               className={mode === 'classic' ? 'active' : ''}
-              onClick={() => setMode('classic')}
+              onClick={() => changeMode('classic')}
               title="Flip and grade yourself"
             >
               Classic
             </button>
             <button
               className={mode === 'ai' ? 'active' : ''}
-              onClick={() => setMode('ai')}
+              onClick={() => changeMode('ai')}
               title="Type your answer, AI grades your understanding"
             >
               <Sparkles size={13} /> AI
+            </button>
+            <button
+              className={mode === 'questions' ? 'active' : ''}
+              onClick={() => changeMode('questions')}
+              title="AI asks fresh questions about each card"
+            >
+              <BrainCircuit size={13} /> Questions
             </button>
           </div>
           {navInfo.total > 1 && (
@@ -486,7 +750,7 @@ export function StudyView({
                 title="Previous card — no answer recorded (←)"
                 aria-label="Previous card"
                 onClick={() => skipBy(-1)}
-                disabled={aiBusy}
+                disabled={aiBusy || questionBusy}
               >
                 <ChevronLeft size={17} />
               </button>
@@ -498,7 +762,7 @@ export function StudyView({
                 title="Next card — no answer recorded (→)"
                 aria-label="Next card"
                 onClick={() => skipBy(1)}
-                disabled={aiBusy}
+                disabled={aiBusy || questionBusy}
               >
                 <ChevronRight size={17} />
               </button>
@@ -561,10 +825,80 @@ export function StudyView({
       )}
 
       {card && note && (
-        <div className="study-card card-panel" key={card.id + phase}>
-          <div className="study-question">
-            <FieldContent text={frontText} />
+        <div className="study-card card-panel" key={card.id + phase + mode}>
+          <div className={`study-question ${mode === 'questions' ? 'generated-question' : ''}`}>
+            {mode !== 'questions' && <FieldContent text={frontText} />}
+
+            {mode === 'questions' && questionPhase === 'loading' && (
+              <div className="question-loading" role="status">
+                <span className="question-icon-wrap">
+                  <Loader2 size={20} className="spin" />
+                </span>
+                <div>
+                  <span className="question-eyebrow">Question {currentQuestionNumber}</span>
+                  <div className="question-loading-title">Creating a fresh question…</div>
+                  <p>Finding a new angle grounded in this card.</p>
+                </div>
+              </div>
+            )}
+
+            {mode === 'questions' && questionPhase === 'error' && (
+              <div className="question-error-state">
+                <div className="ai-error" role="alert">{questionError}</div>
+                <div className="question-error-actions">
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() =>
+                      void loadCardQuestion(
+                        questionAttempts.map((attempt) => attempt.question.question),
+                      )
+                    }
+                  >
+                    <RefreshCw size={15} /> Try again
+                  </button>
+                  {questionSummary && (
+                    <button className="btn btn-primary" onClick={finishQuestionCard}>
+                      Next card <ArrowRight size={15} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {mode === 'questions' && cardQuestion && questionPhase !== 'loading' && (
+              <div className="question-prompt anim-in" key={cardQuestion.question}>
+                <div className="question-prompt-head">
+                  <span className="question-icon-wrap" aria-hidden="true">
+                    <MessageCircleQuestion size={20} />
+                  </span>
+                  <span className="question-eyebrow">AI question {currentQuestionNumber}</span>
+                </div>
+                <div className="question-text">
+                  <InlineContent text={cardQuestion.question} />
+                </div>
+                {cardQuestion.showCardImages && cardImageTokens && (
+                  <div className="question-images">
+                    <FieldContent text={cardImageTokens} />
+                  </div>
+                )}
+              </div>
+            )}
           </div>
+
+          {mode === 'questions' && questionAttempts.length > 0 && (
+            <div className="question-attempts" aria-label="Scores for this card">
+              {questionAttempts.map((attempt, index) => (
+                <span
+                  key={`${index}-${attempt.question.question}`}
+                  className={`question-score-chip ai-${attempt.result.verdict}`}
+                  title={attempt.question.question}
+                >
+                  <span>Q{index + 1}</span>
+                  <strong>{attempt.result.score}</strong>
+                </span>
+              ))}
+            </div>
+          )}
 
           {phase === 'question' && mode === 'classic' && (
             <div className="study-actions">
@@ -609,8 +943,113 @@ export function StudyView({
             </div>
           )}
 
+          {mode === 'questions' &&
+            cardQuestion &&
+            (questionPhase === 'question' || questionPhase === 'grading') && (
+              <div className="ai-answer-zone question-answer-zone">
+                <textarea
+                  ref={answerBox}
+                  className="textarea ai-answer-box question-answer-box"
+                  placeholder="Answer this question in your own words. Ctrl+Enter to submit."
+                  value={questionAnswer}
+                  onChange={(e) => setQuestionAnswer(e.target.value)}
+                  disabled={questionPhase === 'grading'}
+                  rows={3}
+                />
+                {questionError && <div className="ai-error" role="alert">{questionError}</div>}
+                <div className="study-actions">
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => void submitQuestionAnswer()}
+                    disabled={questionPhase === 'grading' || !questionAnswer.trim()}
+                  >
+                    {questionPhase === 'grading' ? (
+                      <>
+                        <Loader2 size={16} className="spin" /> Evaluating…
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles size={16} /> Submit answer
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
+
+          {mode === 'questions' &&
+            questionPhase === 'result' &&
+            cardQuestion &&
+            questionResult &&
+            questionSummary && (
+              <div className="question-result-stack anim-in">
+                <div className={`ai-result ai-${questionResult.verdict}`}>
+                  <div className="ai-result-head">
+                    <div
+                      className="ai-score-ring"
+                      style={{ ['--score' as string]: questionResult.score }}
+                    >
+                      <span>{questionResult.score}</span>
+                    </div>
+                    <div>
+                      <div className="ai-verdict">
+                        {questionResult.verdict === 'correct'
+                          ? 'Correct — you understand this'
+                          : questionResult.verdict === 'partially_correct'
+                            ? 'Partially correct'
+                            : 'Not quite'}
+                      </div>
+                      <p className="ai-feedback">
+                        <InlineContent text={questionResult.feedback} />
+                      </p>
+                      {questionResult.keyPointsMissed.length > 0 && (
+                        <ul className="ai-missed">
+                          {questionResult.keyPointsMissed.map((point, index) => (
+                            <li key={index}>
+                              <InlineContent text={point} />
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                  <div className="ai-your-answer">
+                    <span className="field-label">Your answer</span>
+                    <InlineContent text={questionAnswer} />
+                  </div>
+                </div>
+
+                <div className="question-reference">
+                  <span className="field-label">Reference answer</span>
+                  <InlineContent text={cardQuestion.expectedAnswer} />
+                </div>
+
+                <div className="question-session-summary">
+                  <span>
+                    {questionAttempts.length} question{questionAttempts.length === 1 ? '' : 's'} on
+                    this card
+                  </span>
+                  <strong>{questionSummary.score} average · {questionRatingLabel}</strong>
+                </div>
+
+                <div className="question-next-actions">
+                  <button className="btn btn-secondary" onClick={askAnotherQuestion}>
+                    <ListPlus size={16} /> Another question <kbd>N</kbd>
+                  </button>
+                  <button className="btn btn-primary" onClick={finishQuestionCard}>
+                    Next card <ArrowRight size={16} /> <kbd>Enter</kbd>
+                  </button>
+                </div>
+              </div>
+            )}
+
           {phase === 'answer' && (
             <div className="study-reveal anim-in">
+              <div className="study-reveal-toolbar">
+                <button className="btn btn-ghost" onClick={() => setPhase('question')}>
+                  <EyeOff size={15} /> Hide answer <kbd>H</kbd>
+                </button>
+              </div>
               {aiResult && (
                 <div className={`ai-result ai-${aiResult.verdict}`}>
                   <div className="ai-result-head">
@@ -683,6 +1122,7 @@ export function StudyView({
             setEditing(false);
             const fresh = await db.notes.get(note.id);
             const freshCard = card ? await db.cards.get(card.id) : null;
+            resetQuestionSession();
             setNote(fresh ?? null);
             if (!freshCard) {
               if (card) skipCurrent(card.id);
@@ -703,6 +1143,8 @@ export function StudyView({
                 ['1 2 3 4', 'Again · Hard · Good · Easy'],
                 ['← →', 'Previous / next card without answering'],
                 ['Ctrl+Enter', 'Submit answer for AI grading'],
+                ['H', 'Hide a revealed answer'],
+                ['N', 'Ask another AI question on this card'],
                 ['U', 'Undo last review'],
                 ['E', 'Edit current note'],
                 ['-', 'Bury card until tomorrow'],

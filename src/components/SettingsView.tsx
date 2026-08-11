@@ -92,8 +92,8 @@ function AiLanguageField({ value, onChange }: { value: string; onChange: (v: str
         />
       )}
       <span className="tooltip-hint">
-        The AI writes its feedback in this language. “Auto” answers in whatever language the card is
-        written in.
+        The AI writes generated questions and feedback in this language. “Auto” follows the language
+        of each card.
       </span>
     </label>
   );
@@ -186,7 +186,7 @@ export function SettingsView({
 
       <section className="card-panel settings-section">
         <h3>
-          <KeyRound size={17} /> AI grading — Gemini API
+          <KeyRound size={17} /> AI features — Gemini API
         </h3>
         <p className="tooltip-hint">
           Get a free API key at{' '}
@@ -278,6 +278,12 @@ export function SettingsView({
               onClick={() => void patch({ defaultStudyMode: 'ai' })}
             >
               AI grading
+            </button>
+            <button
+              className={settings.defaultStudyMode === 'questions' ? 'active' : ''}
+              onClick={() => void patch({ defaultStudyMode: 'questions' })}
+            >
+              AI questions
             </button>
           </div>
         </label>

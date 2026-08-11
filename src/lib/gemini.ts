@@ -1,4 +1,10 @@
-import type { AiGradeResult, AiStrictness, GeminiModelOption, Rating } from '../types';
+import type {
+  AiCardQuestion,
+  AiGradeResult,
+  AiStrictness,
+  GeminiModelOption,
+  Rating,
+} from '../types';
 import { mediaBase64, mediaIdsIn } from './media';
 import { clozeAnswers } from './cloze';
 import type { Note } from '../types';
@@ -107,6 +113,7 @@ async function geminiJson(
   settingsModel: string,
   parts: GeminiPart[],
   schema: object,
+  options?: { temperature?: number },
 ): Promise<{ parsed: Record<string, unknown>; apiModel: string; thinkingLevel?: 'low' | 'high' }> {
   const { apiModel, thinkingLevel } = resolveModel(settingsModel);
   const body: Record<string, unknown> = {
@@ -114,6 +121,7 @@ async function geminiJson(
     generationConfig: {
       responseMimeType: 'application/json',
       responseJsonSchema: schema,
+      ...(options?.temperature != null ? { temperature: options.temperature } : {}),
       ...(thinkingLevel ? { thinkingConfig: { thinkingLevel } } : {}),
     },
   };
@@ -309,6 +317,156 @@ export async function gradeAnswer(req: GradeRequest): Promise<AiGradeResult> {
 
   const { parsed, apiModel, thinkingLevel } = await geminiJson(req.apiKey, req.model, parts, GRADE_SCHEMA);
 
+  const score = clampInt(parsed.score, 0, 100, 0);
+  const suggestedRating = clampInt(parsed.suggestedRating, 1, 4, score >= 60 ? 3 : 1) as Rating;
+  const verdict = ['correct', 'partially_correct', 'incorrect'].includes(String(parsed.verdict))
+    ? (parsed.verdict as AiGradeResult['verdict'])
+    : score >= 80
+      ? 'correct'
+      : score >= 40
+        ? 'partially_correct'
+        : 'incorrect';
+
+  return {
+    score,
+    verdict,
+    feedback: String(parsed.feedback ?? ''),
+    keyPointsMissed: Array.isArray(parsed.keyPointsMissed)
+      ? parsed.keyPointsMissed.map(String)
+      : [],
+    suggestedRating,
+    model: apiModel + (thinkingLevel ? ` (thinking: ${thinkingLevel})` : ''),
+  };
+}
+
+// ---------- Fresh AI questions derived from a card ----------
+
+const CARD_QUESTION_SCHEMA = {
+  type: 'object',
+  properties: {
+    question: {
+      type: 'string',
+      description: 'One clear, self-contained study question grounded only in the card content.',
+    },
+    expectedAnswer: {
+      type: 'string',
+      description: 'A concise but complete reference answer supported by the card content.',
+    },
+    showCardImages: {
+      type: 'boolean',
+      description: 'True only when seeing an attached card image is necessary to answer the question.',
+    },
+  },
+  required: ['question', 'expectedAnswer', 'showCardImages'],
+} as const;
+
+export interface GenerateCardQuestionRequest {
+  note: Note;
+  previousQuestions: string[];
+  apiKey: string;
+  model: string;
+  /** 'auto' (or empty) = use the card's language; otherwise a language name */
+  language?: string;
+}
+
+export interface GradeCardQuestionRequest {
+  note: Note;
+  question: AiCardQuestion;
+  userAnswer: string;
+  apiKey: string;
+  model: string;
+  strictness: AiStrictness;
+  language?: string;
+}
+
+/** Remove Anki cloze markup while retaining every fact for question generation. */
+function expandAllClozes(text: string): string {
+  return text.replace(
+    /\{\{c\d+::((?:[^:]|:(?!:))*?)(?:::((?:[^:]|:(?!:))*?))?\}\}/g,
+    (_all, content: string) => content,
+  );
+}
+
+async function partsForCardContent(note: Note): Promise<GeminiPart[]> {
+  const front = note.type === 'cloze' ? expandAllClozes(note.front) : note.front;
+  const parts = await partsForField(note.type === 'cloze' ? 'CARD CONTENT' : 'CARD FRONT', front);
+  if (note.back.trim()) {
+    parts.push(
+      ...(await partsForField(note.type === 'cloze' ? 'CARD EXTRA CONTEXT' : 'CARD BACK', note.back)),
+    );
+  }
+  return parts;
+}
+
+function outputLanguageInstruction(language: string | undefined, output: string): string {
+  return !language || language === 'auto'
+    ? `Write ${output} in the same language as the card (use the dominant language if it mixes several).`
+    : `Write ${output} in ${language}, regardless of the language used by the card or student.`;
+}
+
+/** Create one varied question that can be answered entirely from the card. */
+export async function generateCardQuestion(
+  req: GenerateCardQuestionRequest,
+): Promise<AiCardQuestion> {
+  if (!req.apiKey) {
+    throw new GeminiError('No API key configured. Add your Gemini API key in Settings.');
+  }
+
+  const previous = req.previousQuestions.map((q) => q.trim()).filter(Boolean).slice(-10);
+  const parts: GeminiPart[] = [
+    {
+      text: `You are running an active-recall study session. Create exactly one fresh question about the supplied flashcard. The question and reference answer must be supported entirely by the card content; never add outside facts. Test understanding, a relationship, a definition, a consequence explicitly stated in the card, or a useful rephrasing. Do not mention "the card", its front/back, or ask what the card says. Prefer a different angle from the original wording when the content supports one. If the card contains only one atomic fact, rephrase that fact instead of inventing detail. Do not reveal the answer in the question. Set "showCardImages" to true only if the learner must see an attached image to answer; otherwise false. ${outputLanguageInstruction(req.language, 'both "question" and "expectedAnswer"')}`,
+    },
+    ...(await partsForCardContent(req.note)),
+  ];
+  if (previous.length > 0) {
+    parts.push({
+      text: `QUESTIONS ALREADY ASKED — create a meaningfully different question if the card supports it:\n${previous.map((q, i) => `${i + 1}. ${q}`).join('\n')}`,
+    });
+  }
+
+  const { parsed, apiModel, thinkingLevel } = await geminiJson(
+    req.apiKey,
+    req.model,
+    parts,
+    CARD_QUESTION_SCHEMA,
+    { temperature: 1.1 },
+  );
+  const question = String(parsed.question ?? '').trim();
+  const expectedAnswer = String(parsed.expectedAnswer ?? '').trim();
+  if (!question || !expectedAnswer) {
+    throw new GeminiError('Gemini returned an incomplete question. Try another one.');
+  }
+  return {
+    question,
+    expectedAnswer,
+    showCardImages: parsed.showCardImages === true,
+    model: apiModel + (thinkingLevel ? ` (thinking: ${thinkingLevel})` : ''),
+  };
+}
+
+/** Grade one submitted answer against its generated, card-grounded question. */
+export async function gradeCardQuestion(req: GradeCardQuestionRequest): Promise<AiGradeResult> {
+  if (!req.apiKey) {
+    throw new GeminiError('No API key configured. Add your Gemini API key in Settings.');
+  }
+
+  const parts: GeminiPart[] = [
+    {
+      text: `You are grading one active-recall question for understanding, not word-for-word recall. Compare the student's answer with the supplied reference answer and underlying card content. Accept correct synonyms, paraphrases, and equivalent math. Do not require facts that are absent from the card. If images are attached, they are part of the source content. ${outputLanguageInstruction(req.language, '"feedback" and "keyPointsMissed"')} ${STRICTNESS_PROMPTS[req.strictness]}`,
+    },
+    ...(await partsForCardContent(req.note)),
+    { text: `QUESTION:\n${req.question.question}` },
+    { text: `REFERENCE ANSWER:\n${req.question.expectedAnswer}` },
+    { text: `STUDENT'S ANSWER:\n${req.userAnswer.trim() || '(blank)'}` },
+  ];
+
+  const { parsed, apiModel, thinkingLevel } = await geminiJson(
+    req.apiKey,
+    req.model,
+    parts,
+    GRADE_SCHEMA,
+  );
   const score = clampInt(parsed.score, 0, 100, 0);
   const suggestedRating = clampInt(parsed.suggestedRating, 1, 4, score >= 60 ? 3 : 1) as Rating;
   const verdict = ['correct', 'partially_correct', 'incorrect'].includes(String(parsed.verdict))

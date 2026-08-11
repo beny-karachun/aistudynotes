@@ -131,6 +131,7 @@ export interface GeminiModelOption {
 }
 
 export type AiStrictness = 'lenient' | 'moderate' | 'strict';
+export type StudyMode = 'classic' | 'ai' | 'questions';
 
 export interface Settings {
   id: 'app';
@@ -139,7 +140,7 @@ export interface Settings {
   model: GeminiModelId;
   aiStrictness: AiStrictness;
   /** default answer mode when studying */
-  defaultStudyMode: 'classic' | 'ai';
+  defaultStudyMode: StudyMode;
   /** hour of day when the "day" rolls over (Anki default 4am) */
   dayStartHour: number;
   /** decks page behavior: desktop-style icon grid or simple list */
@@ -169,6 +170,16 @@ export interface AiGradeResult {
   feedback: string;
   keyPointsMissed: string[];
   suggestedRating: Rating;
+  model: string;
+}
+
+/** A fresh AI-generated prompt derived only from one card's content. */
+export interface AiCardQuestion {
+  question: string;
+  /** Kept hidden until grading; used as the grounded reference answer. */
+  expectedAnswer: string;
+  /** Whether the learner needs to see the card's images to answer. */
+  showCardImages: boolean;
   model: string;
 }
 

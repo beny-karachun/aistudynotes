@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
   Search,
@@ -10,6 +10,7 @@ import {
   RotateCcw,
   Tags,
   EyeOff,
+  Play,
 } from 'lucide-react';
 import { db } from '../db';
 import type { CardRecord, Note } from '../types';
@@ -51,10 +52,12 @@ export function BrowserView({
   initialQuery,
   dayStartHour,
   onChanged,
+  onStudyCards,
 }: {
   initialQuery: string;
   dayStartHour: number;
   onChanged: () => void;
+  onStudyCards: (cardIds: string[]) => void;
 }) {
   const toast = useToast();
   const confirm = useConfirm();
@@ -64,6 +67,11 @@ export function BrowserView({
   const [editingNote, setEditingNote] = useState<string | null>(null);
   const [movePicker, setMovePicker] = useState(false);
   const [moveTarget, setMoveTarget] = useState('');
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    cardIds: string[];
+  } | null>(null);
   const now = Date.now();
 
   const data = useLiveQuery(async () => {
@@ -85,7 +93,25 @@ export function BrowserView({
       .filter((r) => r.note && match(r))
       .map((r) => ({ ...r, deckPath: paths.get(r.card.deckId) ?? '?' }))
       .sort((a, b) => b.note.createdAt - a.note.createdAt || a.card.ord - b.card.ord);
-  }, [data, query, now]);
+  }, [data, query, now, dayStartHour]);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') close();
+    };
+    window.addEventListener('click', close);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('click', close);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [contextMenu]);
 
   if (!data) return <div className="view-pad">Loading…</div>;
 
@@ -245,6 +271,17 @@ export function BrowserView({
                 className={`${selected.has(card.id) ? 'row-selected' : ''} ${card.suspended ? 'row-suspended' : ''}`}
                 onClick={(e) => toggleRow(card.id, e)}
                 onDoubleClick={() => setEditingNote(card.noteId)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  const cardIds = selected.has(card.id)
+                    ? selectedCards.map((row) => row.card.id)
+                    : [card.id];
+                  if (!selected.has(card.id)) {
+                    setSelected(new Set([card.id]));
+                    setLastClicked(card.id);
+                  }
+                  setContextMenu({ x: e.clientX, y: e.clientY, cardIds });
+                }}
               >
                 <td className="cell-question">
                   {card.flag > 0 && <Flag size={12} fill={FLAG_COLORS[card.flag]} color={FLAG_COLORS[card.flag]} />}
@@ -274,8 +311,18 @@ export function BrowserView({
         )}
       </div>
       <p className="tooltip-hint" style={{ marginTop: 10 }}>
-        Click to select · Ctrl-click to multi-select · Shift-click for ranges · double-click to edit
+        Click to select · Ctrl-click to multi-select · Shift-click for ranges · right-click to study ·
+        double-click to edit
       </p>
+
+      {contextMenu && (
+        <BrowserStudyMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          count={contextMenu.cardIds.length}
+          onStudy={() => onStudyCards(contextMenu.cardIds)}
+        />
+      )}
 
       {editingNote && (
         <NoteEditModal
@@ -301,6 +348,53 @@ export function BrowserView({
           </div>
         </Modal>
       )}
+    </div>
+  );
+}
+
+function BrowserStudyMenu({
+  x,
+  y,
+  count,
+  onStudy,
+}: {
+  x: number;
+  y: number;
+  count: number;
+  onStudy: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState({ x, y });
+
+  useEffect(() => {
+    const menu = ref.current;
+    if (!menu) return;
+    const rect = menu.getBoundingClientRect();
+    setPosition({
+      x: Math.max(8, Math.min(x, window.innerWidth - rect.width - 8)),
+      y: Math.max(8, Math.min(y, window.innerHeight - rect.height - 8)),
+    });
+    menu.querySelector<HTMLButtonElement>('button')?.focus();
+  }, [x, y]);
+
+  return (
+    <div
+      ref={ref}
+      className="ctx-menu browser-card-menu anim-in"
+      style={{ left: position.x, top: position.y }}
+      role="menu"
+      aria-label="Selected card actions"
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      <button
+        role="menuitem"
+        onClick={(e) => {
+          e.stopPropagation();
+          onStudy();
+        }}
+      >
+        <Play size={15} /> {count === 1 ? 'Study card now' : `Study ${count} cards now`}
+      </button>
     </div>
   );
 }

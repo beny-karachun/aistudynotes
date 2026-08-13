@@ -244,6 +244,28 @@ try {
   const suspCount = await page.$$eval('.browser-table tbody tr', (rs) => rs.length);
   if (suspCount === 1) ok('is:suspended finds the suspended card'); else fail('is:suspended', `got ${suspCount}`);
 
+  // 9b. Right-click an explicit selection to study it even though its cards
+  // are in learning steps and one is suspended.
+  await page.click('.browser-search input');
+  await pressWithCtrl(page, 'a');
+  await page.keyboard.press('Backspace');
+  await sleep(300);
+  const browserRows = await page.$$('.browser-table tbody tr');
+  await browserRows[0].click();
+  await page.keyboard.down('Control');
+  await browserRows[1].click();
+  await page.keyboard.up('Control');
+  await browserRows[1].click({ button: 'right' });
+  await page.waitForSelector('.browser-card-menu');
+  await waitForText(page, 'Study 2 cards now');
+  await clickByText(page, '.browser-card-menu button', 'Study 2 cards now');
+  await page.waitForSelector('.study-card');
+  const selectedPosition = await page.$eval('.card-nav-pos', (e) => e.textContent.trim());
+  if (selectedPosition.endsWith('/2')) ok('right-click studies 2 selected cards outside the due queue');
+  else fail('selected-card study', `expected */2, got ${selectedPosition}`);
+  await clickByText(page, '.study-topbar button', 'Browse');
+  await page.waitForSelector('.browser-table');
+
   // 10. Stats renders
   await clickByText(page, '.nav-item', 'Stats');
   await waitForText(page, 'Statistics');

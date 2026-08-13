@@ -37,6 +37,7 @@ import { CardState } from '../types';
 import {
   answerCard,
   buildQueue,
+  buildSelectedQueue,
   buryCard,
   dayEnd,
   intervalPreviews,
@@ -140,15 +141,20 @@ function orderedCandidates(q: StudyQueue, now: number): CardRecord[] {
 
 export function StudyView({
   deckId,
+  selectedCardIds,
   settings,
   onExit,
+  exitLabel,
   onChanged,
   onSettingsChanged,
 }: {
   /** null = study the whole collection */
   deckId: string | null;
+  /** Explicit Browser selection; these cards are queued even when not due. */
+  selectedCardIds?: string[];
   settings: Settings;
   onExit: () => void;
+  exitLabel?: string;
   onChanged: () => void;
   onSettingsChanged: () => void;
 }) {
@@ -228,10 +234,12 @@ export function StudyView({
       onExit();
       return;
     }
-    const q = await buildQueue(allDecks, deckId, Date.now(), settings.dayStartHour);
+    const q = selectedCardIds
+      ? await buildSelectedQueue(selectedCardIds)
+      : await buildQueue(allDecks, deckId, Date.now(), settings.dayStartHour);
     setQueue(q);
     presentFrom(q);
-  }, [deckId, settings.dayStartHour, presentFrom, onExit]);
+  }, [deckId, selectedCardIds, settings.dayStartHour, presentFrom, onExit]);
 
   useEffect(() => {
     void loadQueue();
@@ -264,8 +272,12 @@ export function StudyView({
     if (!queue) return { newCount: 0, learnCount: 0, reviewCount: 0 };
     return {
       newCount: queue.main.filter((c) => c.state === CardState.New).length,
-      learnCount: queue.learning.length,
-      reviewCount: queue.main.filter((c) => c.state !== CardState.New).length,
+      learnCount:
+        queue.learning.length +
+        queue.main.filter(
+          (c) => c.state === CardState.Learning || c.state === CardState.Relearning,
+        ).length,
+      reviewCount: queue.main.filter((c) => c.state === CardState.Review).length,
     };
   }, [queue]);
 
@@ -803,7 +815,7 @@ export function StudyView({
     <div className="study-view anim-in">
       <div className="study-topbar">
         <button className="btn btn-ghost btn-sm" onClick={onExit}>
-          <ArrowLeft size={15} /> {rootDeck?.name ?? 'All decks'}
+          <ArrowLeft size={15} /> {exitLabel ?? rootDeck?.name ?? 'All decks'}
         </button>
         <div className="study-counts" aria-label="Remaining cards">
           <span className={`count-new ${stateLabel === 'new' ? 'count-active' : ''}`}>{remaining.newCount}</span>
@@ -900,9 +912,13 @@ export function StudyView({
         <div className="study-done card-panel anim-in">
           <PartyPopper size={40} className="done-icon" />
           <h2>Congratulations!</h2>
-          <p>You've finished this deck for now. Come back later for more reviews.</p>
+          <p>
+            {selectedCardIds
+              ? `You've finished the ${selectedCardIds.length === 1 ? 'selected card' : `${selectedCardIds.length} selected cards`}.`
+              : "You've finished this deck for now. Come back later for more reviews."}
+          </p>
           <button className="btn btn-primary" onClick={onExit}>
-            Back to decks
+            {exitLabel ? `Back to ${exitLabel}` : 'Back to decks'}
           </button>
         </div>
       )}
@@ -917,7 +933,7 @@ export function StudyView({
             will appear automatically.
           </p>
           <button className="btn btn-secondary" onClick={onExit}>
-            Back to decks
+            {exitLabel ? `Back to ${exitLabel}` : 'Back to decks'}
           </button>
         </div>
       )}

@@ -202,6 +202,28 @@ export interface StudyQueue {
   counts: StudyCounts;
 }
 
+/**
+ * Build a one-off queue from cards chosen in the browser. Unlike the regular
+ * deck queue, an explicit selection is intentional, so due dates, daily
+ * limits, suspension, and burial do not filter it. Putting every selected
+ * card in `main` also makes future learning cards immediately eligible.
+ */
+export async function buildSelectedQueue(cardIds: string[]): Promise<StudyQueue> {
+  const uniqueIds = [...new Set(cardIds)];
+  const found = await db.cards.bulkGet(uniqueIds);
+  const main = found.filter((card): card is CardRecord => card !== undefined);
+
+  return {
+    learning: [],
+    main,
+    counts: {
+      newCount: main.filter((card) => card.state === CardState.New).length,
+      learnCount: main.filter((card) => isLearningState(card)).length,
+      reviewCount: main.filter((card) => card.state === CardState.Review).length,
+    },
+  };
+}
+
 interface DeckBuckets {
   deck: Deck;
   newCards: CardRecord[];

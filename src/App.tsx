@@ -20,7 +20,13 @@ import './app.css';
 
 type View =
   | { name: 'decks' }
-  | { name: 'study'; deckId: string | null } // null = whole collection
+  | {
+      name: 'study';
+      deckId: string | null;
+      /** Present for an explicit Browser selection; bypasses the normal due queue. */
+      cardIds?: string[];
+      returnTo?: 'decks' | 'browse';
+    } // null deckId = whole collection
   | { name: 'add' }
   | { name: 'browse' }
   | { name: 'stats' }
@@ -80,7 +86,15 @@ export default function App() {
   const bumpRefresh = useCallback(() => setRefreshKey((k) => k + 1), []);
   // Stable identity: StudyView's queue-building effect depends on this — an
   // inline arrow would silently rebuild the study queue on every re-render.
-  const exitStudy = useCallback(() => setView({ name: 'decks' }), []);
+  const exitStudy = useCallback(
+    () =>
+      setView((current) =>
+        current.name === 'study' && current.returnTo === 'browse'
+          ? { name: 'browse' }
+          : { name: 'decks' },
+      ),
+    [],
+  );
 
   if (!settings) {
     return (
@@ -103,7 +117,12 @@ export default function App() {
           {NAV.map(({ view: v, label, icon: Icon }) => (
             <button
               key={v}
-              className={`nav-item ${view.name === v || (v === 'decks' && view.name === 'study') ? 'nav-active' : ''}`}
+              className={`nav-item ${
+                view.name === v ||
+                (view.name === 'study' && (view.returnTo ?? 'decks') === v)
+                  ? 'nav-active'
+                  : ''
+              }`}
               onClick={() => {
                 if (v === 'add') setAddOrigin(null); // generic entry: no folder to go back to
                 setView({ name: v } as View);
@@ -140,8 +159,10 @@ export default function App() {
         {view.name === 'study' && (
           <StudyView
             deckId={view.deckId}
+            selectedCardIds={view.cardIds}
             settings={settings}
             onExit={exitStudy}
+            exitLabel={view.returnTo === 'browse' ? 'Browse' : undefined}
             onChanged={bumpRefresh}
             onSettingsChanged={() => void reloadSettings()}
           />
@@ -159,7 +180,19 @@ export default function App() {
           />
         )}
         {view.name === 'browse' && (
-          <BrowserView initialQuery="" dayStartHour={settings.dayStartHour} onChanged={bumpRefresh} />
+          <BrowserView
+            initialQuery=""
+            dayStartHour={settings.dayStartHour}
+            onChanged={bumpRefresh}
+            onStudyCards={(cardIds) =>
+              setView({
+                name: 'study',
+                deckId: null,
+                cardIds,
+                returnTo: 'browse',
+              })
+            }
+          />
         )}
         {view.name === 'stats' && <StatsView dayStartHour={settings.dayStartHour} />}
         {view.name === 'settings' && (

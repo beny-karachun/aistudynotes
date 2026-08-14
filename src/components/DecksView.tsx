@@ -5,6 +5,7 @@ import {
   ChevronRight,
   ChevronRight as Crumb,
   ClipboardPaste,
+  Clock,
   Copy,
   Download,
   FileText,
@@ -27,7 +28,16 @@ import {
 import { db, saveSettings } from '../db';
 import { AiNotesModal } from './AiNotesModal';
 import { InlineContent } from './FieldContent';
-import type { Deck, DeckConfig, DeckTreeNode, Note, Settings, StudyCounts } from '../types';
+import type {
+  CardRecord,
+  Deck,
+  DeckConfig,
+  DeckTreeNode,
+  Note,
+  Settings,
+  StudyCounts,
+} from '../types';
+import { CardState } from '../types';
 import {
   buildDeckTree,
   copyDeckSubtree,
@@ -62,6 +72,47 @@ type Ctx = { x: number; y: number; target: CtxTarget } | null;
 const deckKey = (id: string) => `d:${id}`;
 const noteKey = (id: string) => `n:${id}`;
 const NOTE_TILE_CAP = 96;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+interface TileDueStatus {
+  label: string;
+  title: string;
+  tone: 'due' | 'soon' | 'later' | 'paused';
+}
+
+function tileDueStatus(cards: CardRecord[], now: number): TileDueStatus | null {
+  const studied = cards.filter((card) => card.state !== CardState.New);
+  if (studied.length === 0) return null;
+
+  const active = studied.filter((card) => !card.suspended);
+  if (active.length === 0) {
+    return {
+      label: 'Paused',
+      title: 'All studied cards on this tile are suspended.',
+      tone: 'paused',
+    };
+  }
+
+  const nextDue = Math.min(
+    ...active.map((card) => Math.max(card.due, card.buriedUntil ?? card.due)),
+  );
+  const remaining = nextDue - now;
+  if (remaining <= 0) {
+    return {
+      label: 'Due',
+      title: 'Ready to review now.',
+      tone: 'due',
+    };
+  }
+
+  const days = Math.ceil(remaining / DAY_MS);
+  const label = remaining < DAY_MS ? '<1d' : `${days}d`;
+  return {
+    label,
+    title: `Next review ${remaining < DAY_MS ? 'in less than a day' : `in ${days} day${days === 1 ? '' : 's'}`} (${new Date(nextDue).toLocaleString()}).`,
+    tone: days <= 3 ? 'soon' : 'later',
+  };
+}
 
 export function DecksView({
   onStudy,
@@ -259,9 +310,15 @@ function DesktopGrid({
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [dropKey, setDropKey] = useState<string | null>(null); // 'd:<id>' | 'crumb:<id|home>'
   const [marquee, setMarquee] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const [clockNow, setClockNow] = useState(() => Date.now());
   const dragRef = useRef<{ deckIds: string[]; noteIds: string[] }>({ deckIds: [], noteIds: [] });
   const marqueeMoved = useRef(false);
   const gridRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setClockNow(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const folder = folderId ? decks.find((d) => d.id === folderId) ?? null : null;
   const childFolders = useMemo(
@@ -281,7 +338,16 @@ function DesktopGrid({
     [folderId],
   );
   const notes = folderData?.notes;
-  const noteCards = folderData?.cards ?? [];
+  const noteCards = folderData?.cards;
+  const cardsByNote = useMemo(() => {
+    const byNote = new Map<string, CardRecord[]>();
+    for (const card of noteCards ?? []) {
+      const cards = byNote.get(card.noteId) ?? [];
+      cards.push(card);
+      byNote.set(card.noteId, cards);
+    }
+    return byNote;
+  }, [noteCards]);
   const sortedNotes = useMemo(
     () => [...(notes ?? [])].sort((a, b) => b.createdAt - a.createdAt),
     [notes],
@@ -324,7 +390,7 @@ function DesktopGrid({
   const cardsForNotes = (noteIds: string[]) => {
     const noteIdSet = new Set(noteIds);
     const noteOrder = new Map(sortedNotes.map((note, index) => [note.id, index]));
-    return noteCards
+    return (noteCards ?? [])
       .filter((card) => noteIdSet.has(card.noteId))
       .sort(
         (a, b) =>
@@ -967,6 +1033,8 @@ function DesktopGrid({
               <NoteTile
                 key={key}
                 note={n}
+                cards={cardsByNote.get(n.id) ?? []}
+                now={clockNow}
                 selected={selected.has(key)}
                 cut={isCut(key)}
                 onClick={(e) => {
@@ -1021,6 +1089,8 @@ function noteTitle(note: Note): string {
 
 function NoteTile({
   note,
+  cards,
+  now,
   selected,
   cut,
   onClick,
@@ -1030,6 +1100,8 @@ function NoteTile({
   onDragEnd,
 }: {
   note: Note;
+  cards: CardRecord[];
+  now: number;
   selected: boolean;
   cut: boolean;
   onClick: (e: React.MouseEvent) => void;
@@ -1040,6 +1112,7 @@ function NoteTile({
 }) {
   const [thumb, setThumb] = useState<string | null>(null);
   const imgId = mediaIdsIn(note.front)[0] ?? mediaIdsIn(note.back)[0];
+  const dueStatus = tileDueStatus(cards, now);
 
   useEffect(() => {
     let alive = true;
@@ -1071,6 +1144,16 @@ function NoteTile({
           <ImageIcon size={34} strokeWidth={1.4} />
         ) : (
           <FileText size={34} strokeWidth={1.4} />
+        )}
+        {dueStatus && (
+          <span
+            className={`note-due-badge note-due-${dueStatus.tone}`}
+            title={dueStatus.title}
+            aria-label={dueStatus.title}
+          >
+            <Clock size={10} aria-hidden="true" />
+            {dueStatus.label}
+          </span>
         )}
       </div>
       <div className="tile-name" title={noteTitle(note)}>

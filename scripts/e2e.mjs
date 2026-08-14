@@ -444,6 +444,12 @@ try {
   const noteTiles = await page.$$eval('.note-tile', (ts) => ts.length);
   if (noteTiles === 2) ok('2 notes shown as file tiles inside the folder');
   else fail('note tiles', `expected 2, got ${noteTiles}`);
+  const noteDueBadges = await page.$$eval('.note-tile .note-due-badge', (badges) =>
+    badges.map((badge) => badge.textContent.trim()),
+  );
+  if (noteDueBadges.includes('<1d') && noteDueBadges.includes('Paused')) {
+    ok('studied note tiles show their next-review countdown or paused state');
+  } else fail('note tile due badges', JSON.stringify(noteDueBadges));
   const desktopNotes = await page.$$('.note-tile');
   await desktopNotes[0].click();
   await page.keyboard.down('Control');

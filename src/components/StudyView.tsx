@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
   ArrowLeft,
-  ArrowRight,
   BrainCircuit,
   Dumbbell,
   ChevronLeft,
@@ -283,8 +282,8 @@ export function StudyView({
 
   const config = card ? (deckById.get(card.deckId)?.config ?? rootDeck?.config) : rootDeck?.config;
   const previews = useMemo(
-    () => (card && config && phase !== 'question' ? intervalPreviews(card, config) : null),
-    [card, config, phase],
+    () => (card && config ? intervalPreviews(card, config) : null),
+    [card, config],
   );
   const questionAttempts = useMemo<QuestionAttempt[]>(
     () =>
@@ -618,9 +617,9 @@ export function StudyView({
     );
   }, [loadCardQuestions, questionItems]);
 
-  const finishQuestionCard = useCallback(() => {
+  const finishQuestionCard = useCallback((manualRating?: Rating) => {
     if (!questionSummary || !allQuestionsAnswered) return;
-    void rate(questionSummary.suggestedRating, questionSummary);
+    void rate(manualRating ?? questionSummary.suggestedRating, questionSummary);
   }, [allQuestionsAnswered, questionSummary, rate]);
 
   // Invalidate late AI responses when the component unmounts (including the
@@ -740,6 +739,9 @@ export function StudyView({
         if (e.key === 'n' || e.key === 'N') {
           e.preventDefault();
           askMoreQuestions();
+        } else if (['1', '2', '3', '4'].includes(e.key)) {
+          e.preventDefault();
+          finishQuestionCard(parseInt(e.key) as Rating);
         } else if (e.key === ' ' || e.key === 'Enter') {
           e.preventDefault();
           finishQuestionCard();
@@ -1220,34 +1222,61 @@ export function StudyView({
               )}
 
               {allQuestionsAnswered && questionSummary ? (
-                <div className={`question-mastery ${allQuestionsCorrect ? 'is-complete' : 'needs-review'}`}>
-                  <div>
-                    <span className="question-mastery-label">
-                      {allQuestionsCorrect
-                        ? 'Complete understanding demonstrated'
-                        : 'Some facts still need practice'}
-                    </span>
-                    <p>
-                      {questionSummary.score} average · {questionRatingLabel} scheduling result
-                    </p>
+                <>
+                  <div className={`question-mastery ${allQuestionsCorrect ? 'is-complete' : 'needs-review'}`}>
+                    <div>
+                      <span className="question-mastery-label">
+                        {allQuestionsCorrect
+                          ? 'Complete understanding demonstrated'
+                          : 'Some facts still need practice'}
+                      </span>
+                      <p>
+                        {questionSummary.score} average · AI suggests {questionRatingLabel}
+                      </p>
+                    </div>
+                    <div className="question-next-actions">
+                      <button
+                        className="btn btn-secondary"
+                        onClick={askMoreQuestions}
+                        disabled={questionBusy}
+                      >
+                        <ListPlus size={16} /> More questions <kbd>N</kbd>
+                      </button>
+                    </div>
                   </div>
-                  <div className="question-next-actions">
-                    <button
-                      className="btn btn-secondary"
-                      onClick={askMoreQuestions}
-                      disabled={questionBusy}
-                    >
-                      <ListPlus size={16} /> More questions <kbd>N</kbd>
-                    </button>
-                    <button
-                      className="btn btn-primary"
-                      onClick={finishQuestionCard}
-                      disabled={questionBusy}
-                    >
-                      Next card <ArrowRight size={16} /> <kbd>Enter</kbd>
-                    </button>
+                  <div className="question-rating-choice anim-in">
+                    <div className="question-rating-head">
+                      <span className="question-rating-label">How difficult was this card?</span>
+                      <span className="question-rating-hint">
+                        Choose manually · <kbd>Enter</kbd> accepts the AI suggestion
+                      </span>
+                    </div>
+                    <div className="rating-row question-rating-row" aria-label="Choose card rating">
+                      {RATING_META.map((rating) => (
+                        <button
+                          key={rating.rating}
+                          className={`rate-btn ${rating.className} ${
+                            questionSummary.suggestedRating === rating.rating ? 'rate-suggested' : ''
+                          }`}
+                          onClick={() => finishQuestionCard(rating.rating)}
+                          disabled={questionBusy}
+                        >
+                          <span className="rate-interval">
+                            {previews?.[rating.rating] ?? ''}
+                          </span>
+                          <span className="rate-label">
+                            {rating.label} <kbd>{rating.key}</kbd>
+                          </span>
+                          {questionSummary.suggestedRating === rating.rating && (
+                            <span className="rate-ai-tag">
+                              <Sparkles size={11} /> AI suggests
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                </>
               ) : (
                 <p className="question-finish-hint">
                   The card is rated only after every question has been submitted.

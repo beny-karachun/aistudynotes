@@ -2169,6 +2169,37 @@ kbd {
   flex-shrink: 0;
 }
 
+.question-rating-choice {
+  margin-top: 18px;
+  padding-top: 16px;
+  box-shadow: inset 0 1px 0 var(--color-border);
+}
+
+.question-rating-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.question-rating-label {
+  color: var(--color-fg);
+  font-size: 13px;
+  font-weight: 800;
+  text-wrap: balance;
+}
+
+.question-rating-hint {
+  color: var(--color-fg-faint);
+  font-size: 11.5px;
+  text-align: right;
+  text-wrap: pretty;
+}
+
+.question-rating-row {
+  margin-top: 14px;
+}
+
 .rating-row {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -2823,6 +2854,16 @@ kbd {
   .question-next-actions .btn,
   .question-error-actions .btn {
     width: 100%;
+  }
+
+  .question-rating-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .question-rating-hint {
+    text-align: left;
   }
 
   .question-answer-comparison {

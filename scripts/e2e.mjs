@@ -444,6 +444,21 @@ try {
   const noteTiles = await page.$$eval('.note-tile', (ts) => ts.length);
   if (noteTiles === 2) ok('2 notes shown as file tiles inside the folder');
   else fail('note tiles', `expected 2, got ${noteTiles}`);
+  const desktopNotes = await page.$$('.note-tile');
+  await desktopNotes[0].click();
+  await page.keyboard.down('Control');
+  await desktopNotes[1].click();
+  await page.keyboard.up('Control');
+  await desktopNotes[1].click({ button: 'right' });
+  await page.waitForSelector('.ctx-menu');
+  await waitForText(page, 'Study 2 cards now');
+  await clickByText(page, '.ctx-menu button', 'Study 2 cards now');
+  await page.waitForSelector('.study-card');
+  const desktopStudyPosition = await page.$eval('.card-nav-pos', (e) => e.textContent.trim());
+  if (desktopStudyPosition.endsWith('/2')) ok('desktop right-click studies all cards in selected notes');
+  else fail('desktop selected-card study', `expected */2, got ${desktopStudyPosition}`);
+  await clickByText(page, '.study-topbar button', 'Decks');
+  await page.waitForSelector('.note-tile');
   await page.evaluate(() => {
     const t = document.querySelector('.note-tile');
     t.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));

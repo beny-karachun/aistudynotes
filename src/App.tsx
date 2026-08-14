@@ -144,6 +144,14 @@ export default function App() {
               if (deckId !== null) setLastDeckId(deckId);
               setView({ name: 'study', deckId });
             }}
+            onStudyCards={(cardIds) =>
+              setView({
+                name: 'study',
+                deckId: null,
+                cardIds,
+                returnTo: 'decks',
+              })
+            }
             onAddHere={(deckId) => {
               setLastDeckId(deckId);
               setAddOrigin(deckId);
@@ -162,7 +170,9 @@ export default function App() {
             selectedCardIds={view.cardIds}
             settings={settings}
             onExit={exitStudy}
-            exitLabel={view.returnTo === 'browse' ? 'Browse' : undefined}
+            exitLabel={
+              view.cardIds ? (view.returnTo === 'browse' ? 'Browse' : 'Decks') : undefined
+            }
             onChanged={bumpRefresh}
             onSettingsChanged={() => void reloadSettings()}
           />

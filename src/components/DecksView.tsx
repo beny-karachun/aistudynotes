@@ -65,6 +65,7 @@ const NOTE_TILE_CAP = 96;
 
 export function DecksView({
   onStudy,
+  onStudyCards,
   onAddHere,
   settings,
   refreshKey,
@@ -74,6 +75,7 @@ export function DecksView({
 }: {
   /** null = study the whole collection (Home) */
   onStudy: (deckId: string | null) => void;
+  onStudyCards: (cardIds: string[]) => void;
   onAddHere: (deckId: string) => void;
   settings: Settings;
   refreshKey: number;
@@ -159,6 +161,7 @@ export function DecksView({
           folderId={folderId}
           onNavigate={onNavigate}
           onStudy={onStudy}
+          onStudyCards={onStudyCards}
           onAddHere={onAddHere}
           onNewFolder={(parentId) => setAddingUnder({ parentId })}
           onOptions={setOptionsFor}
@@ -228,6 +231,7 @@ function DesktopGrid({
   folderId,
   onNavigate,
   onStudy,
+  onStudyCards,
   onAddHere,
   onNewFolder,
   onOptions,
@@ -239,6 +243,7 @@ function DesktopGrid({
   folderId: string | null;
   onNavigate: (id: string | null) => void;
   onStudy: (deckId: string | null) => void;
+  onStudyCards: (cardIds: string[]) => void;
   onAddHere: (deckId: string) => void;
   onNewFolder: (parentId: string | null) => void;
   onOptions: (deck: Deck) => void;
@@ -263,10 +268,20 @@ function DesktopGrid({
     () => decks.filter((d) => d.parentId === folderId).sort((a, b) => a.name.localeCompare(b.name)),
     [decks, folderId],
   );
-  const notes = useLiveQuery(
-    async () => (folderId ? db.notes.where('deckId').equals(folderId).toArray() : []),
+  const folderData = useLiveQuery(
+    async () => {
+      if (!folderId) return { notes: [], cards: [] };
+      const folderNotes = await db.notes.where('deckId').equals(folderId).toArray();
+      const noteIds = folderNotes.map((note) => note.id);
+      const cards = noteIds.length
+        ? await db.cards.where('noteId').anyOf(noteIds).toArray()
+        : [];
+      return { notes: folderNotes, cards };
+    },
     [folderId],
   );
+  const notes = folderData?.notes;
+  const noteCards = folderData?.cards ?? [];
   const sortedNotes = useMemo(
     () => [...(notes ?? [])].sort((a, b) => b.createdAt - a.createdAt),
     [notes],
@@ -305,6 +320,19 @@ function DesktopGrid({
     }),
     [],
   );
+
+  const cardsForNotes = (noteIds: string[]) => {
+    const noteIdSet = new Set(noteIds);
+    const noteOrder = new Map(sortedNotes.map((note, index) => [note.id, index]));
+    return noteCards
+      .filter((card) => noteIdSet.has(card.noteId))
+      .sort(
+        (a, b) =>
+          (noteOrder.get(a.noteId) ?? Number.MAX_SAFE_INTEGER) -
+            (noteOrder.get(b.noteId) ?? Number.MAX_SAFE_INTEGER) ||
+          a.ord - b.ord,
+      );
+  };
 
   const topMostDecks = useCallback(
     (ids: string[]) => ids.filter((id) => !ids.some((o) => o !== id && isDescendant(decks, id, o))),
@@ -599,7 +627,15 @@ function DesktopGrid({
       ];
     }
     if (target.kind === 'note') {
+      const { noteIds } = splitSelection(selected);
+      const cardCount = cardsForNotes(noteIds).length;
       return [
+        {
+          key: 'studyCards',
+          label: cardCount === 1 ? 'Study card now' : `Study ${cardCount} cards now`,
+          icon: <Play size={15} />,
+          disabled: cardCount === 0,
+        },
         { key: 'edit', label: 'Edit', icon: <Pencil size={15} /> },
         { key: 'cut', label: label('Cut'), icon: <Scissors size={15} /> },
         { key: 'copy', label: label('Copy'), icon: <Copy size={15} /> },
@@ -630,6 +666,11 @@ function DesktopGrid({
       case 'study':
         if (target.kind === 'deck') onStudy(target.id);
         break;
+      case 'studyCards': {
+        const cardIds = cardsForNotes(noteIds).map((card) => card.id);
+        if (cardIds.length > 0) onStudyCards(cardIds);
+        break;
+      }
       case 'rename':
         if (target.kind === 'deck') setRenamingId(target.id);
         break;
